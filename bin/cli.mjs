@@ -208,7 +208,7 @@ async function uninstall() {
     fs.rmSync(path.dirname(MENUBAR_APP), { recursive: true, force: true }); ok(tr('cli.uninstall.menubar'));
   }
 }
-const AGY_EVENTS = ['SessionStart', 'PreInvocation', 'PostToolUse', 'Stop'];
+const AGY_EVENTS = ['SessionStart', 'PreInvocation', 'PreToolUse', 'PostToolUse', 'Stop'];
 const agyCommand = (event) => `"${fwd(process.execPath)}" "${fwd(path.join(ROOT, 'hooks', 'send.mjs'))}" http://127.0.0.1:${PORT}/event --async --agent=antigravity --event=${event} --response-json`;
 const agyOwned = (hook) => hook && Object.keys(hook).length === AGY_EVENTS.length && AGY_EVENTS.every((ev) => {
   const handlers = hook?.[ev];
