@@ -14,7 +14,12 @@ export function createPrefs(dataDir) {
   let prefs = {};
   try { prefs = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { /* first run */ }
   const lang = () => pickLang(prefs.lang || process.env.OFFICE_LANG);
-  const save = () => { fs.mkdirSync(dataDir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(prefs, null, 2)); };
+  const save = () => {
+    fs.mkdirSync(dataDir, { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(prefs, null, 2));
+    fs.renameSync(tmp, file);
+  };
   return {
     lang,
     /** translate in the office's language: tr('server.denied'), tr('time.min', { n: 3 }) */

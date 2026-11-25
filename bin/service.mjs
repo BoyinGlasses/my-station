@@ -12,10 +12,12 @@ import path from 'node:path';
 const run = (cmd, args) => { try { return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); } catch (e) { return e.stdout || ''; } };
 const has = (cmd) => { try { execFileSync(cmd, ['--version'], { stdio: 'ignore', windowsHide: true }); return true; } catch { return false; } };
 
+export const serviceEnv = ({ host, port }) => ({ OFFICE_HOST: host, OFFICE_PORT: String(port), NODE_ENV: 'production' });
+
 /** @param {{ root: string, server: string, log: string, host: string, port: number }} o */
 export function serviceFor({ root, server, log, host, port }) {
   const node = process.execPath, home = os.homedir();
-  const env = { OFFICE_HOST: host, NODE_ENV: 'production' };
+  const env = serviceEnv({ host, port });
   const up = async () => { try { return (await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1500) })).ok; } catch { return false; } };
 
   if (process.platform === 'darwin') {
@@ -88,7 +90,7 @@ export function serviceFor({ root, server, log, host, port }) {
       if (fs.existsSync(path.join(dir, OLD))) { sysd('disable', '--now', OLD); await fsp.rm(path.join(dir, OLD), { force: true }); }
       await fsp.mkdir(path.dirname(file), { recursive: true });
       await fsp.writeFile(file, [
-        '[Unit]', 'Description=My Office (a 3D office for Claude Code sessions)', 'After=network.target', '',
+        '[Unit]', 'Description=My Office (a 3D office for coding agents)', 'After=network.target', '',
         '[Service]', `ExecStart="${node}" "${server}"`, `WorkingDirectory=${root}`,
         ...Object.entries(env).map(([k, v]) => `Environment=${k}=${v}`),
         'Restart=on-failure', 'RestartSec=3', `StandardOutput=append:${log}`, `StandardError=append:${log}`, '',

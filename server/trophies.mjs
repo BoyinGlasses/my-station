@@ -106,8 +106,34 @@ export function createTrophies({ dataDir, claudeDir, today, deployRe, onChange, 
     t.sids = [...new Set([...t.sids, ...seen])].slice(-2000); dirty = true;
     check(true);
   }
-  setInterval(() => { if (!dirty) return; dirty = false; fsp.writeFile(file, JSON.stringify(t)).catch(() => {}); }, 10_000).unref();
+  async function save() {
+    if (!dirty) return;
+    const tmp = `${file}.${process.pid}.tmp`;
+    try {
+      await fsp.mkdir(dataDir, { recursive: true });
+      await fsp.writeFile(tmp, JSON.stringify(t));
+      await fsp.rename(tmp, file);
+      dirty = false;
+    } catch (err) {
+      console.error('trophies save', err);
+      try { await fsp.rm(tmp, { force: true }); } catch { /* ignore */ }
+    }
+  }
+  function saveSync() {
+    if (!dirty) return;
+    const tmp = `${file}.${process.pid}.tmp`;
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(tmp, JSON.stringify(t));
+      fs.renameSync(tmp, file);
+      dirty = false;
+    } catch (err) {
+      console.error('trophies save', err);
+      try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ }
+    }
+  }
+  setInterval(() => { save(); }, 10_000).unref();
   setTimeout(() => { scanHistory().catch(() => {}); }, 5_000).unref();
   check(true, false);   // the server isn't listening yet
-  return { bump, session, pub };
+  return { bump, session, pub, saveSync };
 }

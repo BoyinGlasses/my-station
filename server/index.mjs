@@ -265,11 +265,33 @@ try {
   if (Array.isArray(saved.feed)) feed = saved.feed.slice(-FEED_MAX);
   seq = saved.seq || 0;
 } catch { /* first run */ }
-setInterval(() => {
+async function saveState() {
   if (!dirty) return;
-  dirty = false;
-  fsp.writeFile(STATE_FILE, JSON.stringify({ stats, feed, seq })).catch(() => {});
-}, 10_000).unref();
+  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
+  try {
+    await fsp.mkdir(DATA_DIR, { recursive: true });
+    await fsp.writeFile(tmp, JSON.stringify({ stats, feed, seq }));
+    await fsp.rename(tmp, STATE_FILE);
+    dirty = false;
+  } catch (err) {
+    console.error('state save', err);
+    try { await fsp.rm(tmp, { force: true }); } catch { /* ignore */ }
+  }
+}
+function saveStateSync() {
+  if (!dirty) return;
+  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify({ stats, feed, seq }));
+    fs.renameSync(tmp, STATE_FILE);
+    dirty = false;
+  } catch (err) {
+    console.error('state save', err);
+    try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ }
+  }
+}
+setInterval(() => { saveState(); }, 10_000).unref();
 
 const trophies = createTrophies({ dataDir: DATA_DIR, claudeDir: CLAUDE_DIR, today, deployRe: DEPLOY_RE, tr, num, onChange: (t, earned) => broadcast({ k: 'trophies', t, earned }) });
 
@@ -3768,7 +3790,7 @@ function stopTunnel() {
   Object.assign(tunnel, { state: 'off', url: '', host: '', error: '', tries: 0, pid: 0 });
 }
 // (the office stopping: cloudflared keeps going for when it comes back; staying awake ends with it, caffeinate -w)
-process.on('exit', () => { try { awakeProc?.kill(); } catch { /* gone */ } otel.saveSync(); });
+process.on('exit', () => { try { awakeProc?.kill(); } catch { /* gone */ } saveStateSync(); trophies.saveSync(); otel.saveSync(); });
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => process.exit(0));
 
 server.listen(PORT, HOST, () => {
