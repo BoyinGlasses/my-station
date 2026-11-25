@@ -184,6 +184,7 @@ function fetchVi(text) {
 }
 // Waits up to 1.5 s; a translation that lands later is sent as {k:'vi', from, to} and the page swaps the words in.
 async function toVi(text) {
+  text = redact(String(text || ''));
   if (!TRANSLATE || prefs.lang() !== 'vi' || !text || VI_CHARS.test(text) || !/[a-z]{3}/i.test(text)) return text;
   if (viCache[text]) return viCache[text];
   const job = fetchVi(text);
@@ -391,7 +392,7 @@ function ensureSub(s, agentId, type, now) {
     lookModel(s, x, now);
     subMeta(s, agentId).then(async (m) => {
       if (!m) return;
-      x.desc = clip(redact(oneLine(await toVi(m.description || ''))), 70);
+      x.desc = clip(redact(oneLine(await toVi(redact(oneLine(m.description || ''))))), 70);
       if (m.agentType) x.type = m.agentType;
       broadcast({ k: 'sess', s: pub(s) });
     });
@@ -2769,7 +2770,8 @@ async function openFolder(dir) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (req.method === 'POST' && url.pathname === '/event') {
-    if (!isLoopback(req)) { res.writeHead(403).end(); return; }
+    if (!isLoopback(req) || req.headers.origin) { res.writeHead(403).end(); return; }
+    if (!hostAllowed(req)) { res.writeHead(421).end(); return; }
     const chunks = []; let size = 0;
     req.on('data', (c) => { size += c.length; if (size <= 8_000_000) chunks.push(c); });
     req.on('end', () => {
