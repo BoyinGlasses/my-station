@@ -50,11 +50,8 @@ Tài liệu nền:
   chờ trước khi restart. Sau restart, thử project dưới home Windows cho cả
   hai agent rồi tải lại trang. Chưa xác nhận bước này đã được thực hiện.
 
-- [ ] M05 — Kiểm tra tác dụng phụ của test/build lên `tsconfig.json`.
-  Next có thể thêm đường dẫn types và đổi định dạng khi dùng distDir riêng.
-  Test model hiện dùng `.next-model-project-*` để tránh tranh lock với test
-  khác. Đảm bảo chạy test không làm bẩn cấu hình tracked và không để lại
-  include trỏ tới thư mục đã xóa; chỉ khôi phục phần do công cụ tạo ra.
+- [x] M05 — Kiểm tra tác dụng phụ của test/build lên `tsconfig.json`.
+  Đã thêm `OFFICE_NO_NEXT=1` cho unit test server để các test chạy song song không mở Next `--dev` gây đua sửa/hỏng `tsconfig.json`; giữ `tsconfig.json` sạch sau build và test.
 
 Không sửa parser model chỉ vì dropdown không hiện: đã xác nhận parser đọc
 được output thật của hai CLI. Lỗi Windows ở M01 là một nguyên nhân đã tái
@@ -75,20 +72,14 @@ hiện; trạng thái loading/error bị ẩn trên UI là việc khác ở UX03
 
 Giữ nguyên ID R01–R18 tương ứng phát hiện 1–18 trong báo cáo review.
 
-- [ ] R01 / P0 — Chuẩn hóa permission Codex trước khi phân loại nguy hiểm.
-  Phần liên quan: `server/index.mjs`, `server/agent-events.mjs`,
-  `src/shared/danger.js`. Hoàn thành khi shell tool gốc của Codex được nhận
-  diện đúng, lệnh nguy hiểm không được allow từ điện thoại và phản hồi vẫn
-  dùng đúng giao thức/native session ID của CLI.
+- [x] R01 / P0 — Chuẩn hóa permission Codex trước khi phân loại nguy hiểm.
+  Đã chuẩn hóa tool/input qua `normalizeTool` trong `onPermission` và `runAgent`, nhận diện shell/dangerKey trước duyệt quyền (`tests/unit/agent-office.test.mjs`, `tests/unit/codex-live.test.mjs`).
 
-- [ ] R02 / P0 — Che bí mật trước khi gọi dịch.
-  Phần liên quan: `ensureSub`, `subMeta`, `toVi` trong `server/index.mjs`.
-  Test phải bắt nội dung tại ranh giới gửi mạng và chứng minh token giả
-  không rời máy; kiểm tra chữ cuối cùng trên UI là chưa đủ.
+- [x] R02 / P0 — Che bí mật trước khi gọi dịch.
+  `toVi` gọi `redact(...)` ở đầu hàm trước tra cache/gửi Google Translate và `ensureSub` redact trước khi gọi `toVi` (`tests/unit/security-boundaries.test.mjs`).
 
-- [ ] R03 / P0 — Thống nhất kiểm tra Host/Origin của `/event` với hook khác.
-  Request có nguồn trình duyệt/Host không hợp lệ không được tạo hay thay
-  đổi session; các bridge Node/curl hợp lệ vẫn hoạt động.
+- [x] R03 / P0 — Thống nhất kiểm tra Host/Origin của `/event` với hook khác.
+  `POST /event` đã áp dụng `isLoopback(req)`, từ chối `Origin` (HTTP 403) và kiểm tra `hostAllowed(req)` (HTTP 421) (`tests/unit/security-boundaries.test.mjs`).
 
 - [ ] R04 / P1 — Tách chuyển trạng thái khỏi chờ dịch.
   `PreToolUse` cũ không được đổi session về `work` sau `Stop`. Có test dịch
@@ -113,9 +104,8 @@ Giữ nguyên ID R01–R18 tương ứng phát hiện 1–18 trong báo cáo rev
   Hai agent cùng tên vẫn là hai hàng; nối phiên qua restart bằng danh tính
   ổn định, không gộp mọi session trùng tên.
 
-- [ ] R09 / P1 — Giữ nghĩa success/failure/interrupted của OpenCode 2.
-  `session.execution.failed` không trở thành một lần hoàn tất bình thường;
-  lỗi và trạng thái ngắt được chuyển tới UI/kết quả task đúng ngữ nghĩa.
+- [x] R09 / P1 — Giữ nghĩa success/failure/interrupted của OpenCode 2.
+  `hooks/opencode.mjs` tách `session.execution.succeeded` → `Stop`, `session.execution.failed` → `StopFailure`, `session.execution.interrupted` → `Interrupt` (`tests/unit/opencode-plugin.test.mjs`).
 
 - [ ] R10 / P1 — Cho chế độ danh sách hoạt động khi WebGL thất bại.
   Phần liên quan: boot, renderer, lite và live connection. Có test không
@@ -134,15 +124,11 @@ Giữ nguyên ID R01–R18 tương ứng phát hiện 1–18 trong báo cáo rev
   Quota, account switching, cache và các khả năng chỉ có ở Claude giữ nhãn
   Claude rõ ràng; không đổi tên thành khả năng chung khi chưa hỗ trợ.
 
-- [ ] R13 / P1 — Làm bền dữ liệu khi ghi file và shutdown.
-  Lưu phần đang thay đổi khi dừng có kiểm soát; ghi file tạm rồi đổi tên;
-  giữ dấu cần lưu tới khi thành công; có thông báo/log lỗi. Xác định riêng
-  dữ liệu task/thread nào cần khôi phục, không suy task còn chạy từ card cũ.
+- [x] R13 / P1 — Làm bền dữ liệu khi ghi file và shutdown.
+  `state.json`, `totals.json`, `prefs.json` ghi qua file tạm rồi rename, chỉ xóa dấu `dirty` khi thành công và flush đồng bộ `saveStateSync()` + `trophies.saveSync()` khi thoát (`tests/unit/persistence-service.test.mjs`).
 
-- [ ] R14 / P1 — Ghi OFFICE_PORT vào cấu hình service.
-  launchd/systemd/Windows Startup phải giữ port đã cấu hình qua đăng nhập
-  lại; hook và server dùng cùng port. Kiểm tra bằng cấu hình cô lập trước
-  khi thao tác service thật.
+- [x] R14 / P1 — Ghi OFFICE_PORT vào cấu hình service.
+  `bin/service.mjs` xuất `serviceEnv` gồm `OFFICE_PORT` cho launchd/systemd/Windows Startup (`tests/unit/persistence-service.test.mjs`).
 
 - [ ] R15 / P2 — Tách runtime chung và bridge từng agent trong CLI.
   `install --agent ... --service` không bị bỏ qua im lặng; `doctor --agent`
@@ -154,9 +140,8 @@ Giữ nguyên ID R01–R18 tương ứng phát hiện 1–18 trong báo cáo rev
   fork/resume/history, path Windows và unknown data. Test CLI giả kiểm tra
   được routing nhưng không được xem là bằng chứng CLI/provider thật đã qua.
 
-- [ ] R17 / P2 — Cập nhật và giữ bản đồ module đồng bộ.
-  Chạy script có sẵn và xác nhận `node scripts/module-map.mjs --check`
-  đạt; không xóa bước kiểm tra để che lỗi CI.
+- [x] R17 / P2 — Cập nhật và giữ bản đồ module đồng bộ.
+  `node scripts/module-map.mjs --check` đạt.
 
 - [ ] R18 / P3 — Đọc đủ mọi ngày trong khoảng truy vấn timeline.
   Có fixture 48 giờ với dữ liệu ở ngày giữa; API không bỏ mất hoạt động đó.

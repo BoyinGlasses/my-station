@@ -46,4 +46,4 @@ Trong lần kiểm tra này, global config cũ của CLI vẫn có default `9rou
 - Phiên được mở ngoài Office chỉ được điều khiển khi có native hook/giao thức phù hợp; bridge hoạt động không đồng nghĩa mọi permission của mọi terminal có thể trả lời trong Office.
 - Model có trong danh sách không đảm bảo tài khoản được dùng model đó. Thử Claude hiện tại gặp lỗi model từ cấu hình router; theo yêu cầu mới nhất không tiếp tục thay đổi/chẩn đoán Claude.
 - Chưa chạy thực tế trên macOS/Linux; 5 bài skip trên Windows liên quan Swift, unzip, rewrite và Unix socket. Không bật bỏ qua permission để vượt giới hạn.
-- Git merge vẫn chưa commit/push vì `.git` chỉ đọc trong môi trường này. Script `scripts/finish-upstream-sync.ps1` đã được cập nhật để gồm các module mới; chạy từ terminal có quyền ghi repo.
+- Kho lưu trữ đã được chuyển sang fresh repo `BoyinGlasses/my-station` (nền từ upstream 0.6.0) sau khi sửa các lỗi tương thích test/bảo mật/bền dữ liệu.

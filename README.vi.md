@@ -1,6 +1,6 @@
 # My Office
 
-[![npm](https://img.shields.io/npm/v/claude-my-office?label=npm&color=cb3837)](https://www.npmjs.com/package/claude-my-office) [![CI](https://github.com/khanh020905/my-office/actions/workflows/ci.yml/badge.svg)](https://github.com/khanh020905/my-office/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![CI](https://github.com/BoyinGlasses/my-station/actions/workflows/ci.yml/badge.svg)](https://github.com/BoyinGlasses/my-station/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · Tiếng Việt
 
@@ -10,13 +10,13 @@ Văn phòng chibi 3D cho thấy các session Claude Code đang làm gì, kèm b�
 
 Xem [hướng dẫn cài và giới hạn hiện tại](docs/multi-agent.md) cho Codex, Antigravity, ZCode và OpenCode. Mỗi agent tiếp tục dùng provider và thông tin đăng nhập riêng.
 
-Mở: http://localhost:4310 · Xem thử không cần Claude Code: http://localhost:4310/?demo · Xem online, không cần cài: https://khanh020905.github.io/my-office/vi/
+Mở: http://localhost:4310 · Xem thử không cần Claude Code: http://localhost:4310/?demo · Xem online, không cần cài: https://boyinglasses.github.io/my-station/vi/
 
-**Có câu hỏi hay ý tưởng?** Hỏi ở [Discussions → Q&A](https://github.com/khanh020905/my-office/discussions/categories/q-a), góp ý ở [Ideas](https://github.com/khanh020905/my-office/discussions/categories/ideas), hoặc khoe văn phòng của bạn ở [Show and tell](https://github.com/khanh020905/my-office/discussions/categories/show-and-tell).
+**Có câu hỏi hay ý tưởng?** Hỏi ở [Discussions → Q&A](https://github.com/BoyinGlasses/my-station/discussions/categories/q-a), góp ý ở [Ideas](https://github.com/BoyinGlasses/my-station/discussions/categories/ideas), hoặc khoe văn phòng của bạn ở [Show and tell](https://github.com/BoyinGlasses/my-station/discussions/categories/show-and-tell).
 
 Chạy được trên macOS, Linux và Windows (bảng máy đọc từng hệ điều hành theo cách riêng; mở cửa sổ IDE và thoát app chỉ có trên macOS). Giao diện mặc định là tiếng Anh; đổi sang tiếng Việt trong **Cài đặt → Ngôn ngữ** (hoặc đặt `OFFICE_LANG=vi`).
 
-> My Office là dự án cộng đồng, không do Anthropic làm, bảo trợ hay liên kết.
+> My Station phát triển trên nền [khanh020905/my-office](https://github.com/khanh020905/my-office) (giấy phép MIT), không do Anthropic làm, bảo trợ hay liên kết.
 
 ## Cài
 
@@ -32,7 +32,7 @@ PIN điện thoại, kho lịch sử) nằm ở `~/.my-office`, nên nâng bản
 Cài từ mã nguồn (để sửa code):
 
 ```bash
-git clone https://github.com/khanh020905/my-office.git && cd my-office
+git clone https://github.com/BoyinGlasses/my-station.git && cd my-station
 npm install
 node bin/cli.mjs install --service   # cùng các lệnh như `my-office …`, dữ liệu ở data/
 ```

@@ -1,28 +1,28 @@
 # My Office
 
-[![npm](https://img.shields.io/npm/v/claude-my-office?label=npm&color=cb3837)](https://www.npmjs.com/package/claude-my-office) [![CI](https://github.com/khanh020905/my-office/actions/workflows/ci.yml/badge.svg)](https://github.com/khanh020905/my-office/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![CI](https://github.com/BoyinGlasses/my-station/actions/workflows/ci.yml/badge.svg)](https://github.com/BoyinGlasses/my-station/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 English · [Tiếng Việt](README.vi.md)
 
-A 3D office where your Claude Code sessions come to work. Each session is a character at a desk:
+A 3D office where your coding agent sessions (Claude Code, Codex, OpenCode, Antigravity, ZCode) come to work. Each session is a character at a desk:
 
 - it walks to the library to read files;
 - it types at its desk while it edits;
 - it goes to the server room to run commands;
 - it launches a rocket when you deploy.
 
-The office also looks after your Mac: RAM per session, forgotten dev servers, one-click cleanup.
+The office also looks after your machine: RAM per session, forgotten dev servers, one-click cleanup.
 
 ![My Office: the company floor with sessions at work](docs/media/demo.gif)
 
 **Try it before you install anything.** The demo has made-up projects and needs no Claude Code: run `npm run dev` and
-open <http://localhost:4310/?demo>. Or try it online, nothing to install: <https://khanh020905.github.io/my-office/>
+open <http://localhost:4310/?demo>. Or try it online, nothing to install: <https://boyinglasses.github.io/my-station/>
 (a static build of the same demo, published by `.github/workflows/pages.yml`).
 
-**Questions or ideas?** Ask in [Discussions → Q&A](https://github.com/khanh020905/my-office/discussions/categories/q-a), suggest something in
-[Ideas](https://github.com/khanh020905/my-office/discussions/categories/ideas), or show your office in [Show and tell](https://github.com/khanh020905/my-office/discussions/categories/show-and-tell).
+**Questions or ideas?** Ask in [Discussions → Q&A](https://github.com/BoyinGlasses/my-station/discussions/categories/q-a), suggest something in
+[Ideas](https://github.com/BoyinGlasses/my-station/discussions/categories/ideas), or show your office in [Show and tell](https://github.com/BoyinGlasses/my-station/discussions/categories/show-and-tell).
 
-> My Office is a community project. It is not made by, endorsed by or affiliated with Anthropic.
+> My Station is a community project built on [khanh020905/my-office](https://github.com/khanh020905/my-office) (MIT License). It is not made by, endorsed by or affiliated with Anthropic.
 
 ## Quick start
 
@@ -42,7 +42,7 @@ so upgrading (`npm install -g claude-my-office@latest`) keeps it.
 From the source instead (to change the code):
 
 ```bash
-git clone https://github.com/khanh020905/my-office.git && cd my-office
+git clone https://github.com/BoyinGlasses/my-station.git && cd my-station
 npm install
 node bin/cli.mjs install --service   # the same commands as `my-office …`, its data in data/
 ```

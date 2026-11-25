@@ -1,15 +1,15 @@
 {
   "name": "claude-my-office",
   "version": "0.6.0",
-  "description": "A 3D office for your Claude Code sessions that also looks after your Mac: live agents, approve from the office, RAM per session, forgotten dev servers, cleanup.",
+  "description": "A 3D office and multi-agent control center for Claude Code, Codex, OpenCode, Antigravity, and ZCode.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/khanh020905/my-office.git"
+    "url": "https://github.com/BoyinGlasses/my-station.git"
   },
-  "homepage": "https://github.com/khanh020905/my-office#readme",
+  "homepage": "https://github.com/BoyinGlasses/my-station#readme",
   "bugs": {
-    "url": "https://github.com/khanh020905/my-office/issues"
+    "url": "https://github.com/BoyinGlasses/my-station/issues"
   },
   "keywords": [
     "claude-code",
