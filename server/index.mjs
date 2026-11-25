@@ -3494,16 +3494,20 @@ const server = http.createServer((req, res) => {
 // Next.js renders the page and bundles the office's code: `--dev` runs it with Turbopack and hot reload, otherwise it
 // serves the production build made by `npm run build`.
 const DEV = process.argv.includes('--dev');
+const NO_NEXT = process.env.OFFICE_NO_NEXT === '1';
 // this build's id: a page from an older one (the office was updated and restarted) loads the new one by itself
 const BUILD = (() => { try { return fs.readFileSync(path.join(ROOT, process.env.OFFICE_DIST_DIR || '.next', 'BUILD_ID'), 'utf8').trim(); } catch { return ''; } })();
 // the lift's servicing for the first minutes after a start, longer on a new build (server/lift-service.mjs: a scene)
 const liftService = createLiftService({ dataDir: DATA_DIR, build: BUILD, version: (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version || ''; } catch { return ''; } })() });
-const nextApp = next({ dev: DEV, dir: ROOT, hostname: HOST, port: PORT, httpServer: server });
-const nextHandle = nextApp.getRequestHandler();
-try { await nextApp.prepare(); }
-catch (err) {
-  console.error(DEV ? err : `${tr('server.console.noBuild')}\n${err.message || err}`);
-  process.exit(1);
+let nextHandle = (_req, res) => { res.writeHead(503).end('UI disabled'); };
+if (!NO_NEXT) {
+  const nextApp = next({ dev: DEV, dir: ROOT, hostname: HOST, port: PORT, httpServer: server });
+  nextHandle = nextApp.getRequestHandler();
+  try { await nextApp.prepare(); }
+  catch (err) {
+    console.error(DEV ? err : `${tr('server.console.noBuild')}\n${err.message || err}`);
+    process.exit(1);
+  }
 }
 
 /* ---------- phones on the home network, switched on in the office (the phone window) ----------

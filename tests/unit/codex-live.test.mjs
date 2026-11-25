@@ -12,7 +12,7 @@ test('agent sessions stay isolated and Codex and OpenCode tasks fork then resume
   const port = socket.address().port;
   await new Promise((resolve) => socket.close(resolve));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'office-live-'));
-  const dist = '.next-sync-live-' + path.basename(dir), conversations = path.join(dir, 'conversations');
+  const conversations = path.join(dir, 'conversations');
   fs.mkdirSync(conversations);
   const fake = path.join(dir, 'codex.mjs');
   const rpcFixture = new URL('../fixtures/agent-rpc.mjs', import.meta.url).href;
@@ -24,7 +24,7 @@ test('agent sessions stay isolated and Codex and OpenCode tasks fork then resume
   fs.writeFileSync(fakeAgy, `import {serveFakeAgent} from ${JSON.stringify(rpcFixture)};await serveFakeAgent({agent:'antigravity',sid:'agy-owned',answer:'Antigravity finished',capture:process.env.OFFICE_DATA_DIR+'/agy-call.jsonl'});`);
   const fakeZcode = path.join(dir, 'zcode.mjs');
   fs.writeFileSync(fakeZcode, `import fs from 'node:fs';fs.appendFileSync(process.env.OFFICE_DATA_DIR+'/zcode-call.jsonl',JSON.stringify({args:process.argv.slice(2)})+'\\n');console.log(JSON.stringify({type:'result',sessionId:'sess_owned',response:'ZCode finished'}));`);
-  const proc = spawn(process.execPath, ['server/index.mjs', '--dev'], { env: { ...process.env, HOME: dir, USERPROFILE: dir, OFFICE_DIST_DIR: dist, OFFICE_AG_DIRS: conversations, OFFICE_PORT: String(port), OFFICE_DATA_DIR: dir, OFFICE_HOST: '127.0.0.1', OFFICE_TRANSLATE: '0', OFFICE_CLAUDE_BIN: fake, OFFICE_CODEX_BIN: fake, OFFICE_OPENCODE_BIN: fakeOpenCode, OFFICE_ANTIGRAVITY_BIN: fakeAgy, OFFICE_ZCODE_BIN: fakeZcode, CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), CODEX_HOME: path.join(dir, 'codex') }, stdio: 'ignore' });
+  const proc = spawn(process.execPath, ['server/index.mjs'], { env: { ...process.env, HOME: dir, USERPROFILE: dir, OFFICE_NO_NEXT: '1', OFFICE_AG_DIRS: conversations, OFFICE_PORT: String(port), OFFICE_DATA_DIR: dir, OFFICE_HOST: '127.0.0.1', OFFICE_TRANSLATE: '0', OFFICE_CLAUDE_BIN: fake, OFFICE_CODEX_BIN: fake, OFFICE_OPENCODE_BIN: fakeOpenCode, OFFICE_ANTIGRAVITY_BIN: fakeAgy, OFFICE_ZCODE_BIN: fakeZcode, CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), CODEX_HOME: path.join(dir, 'codex') }, stdio: 'ignore' });
   const base = `http://127.0.0.1:${port}`;
   const send = (event) => fetch(`${base}/event`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) });
   const snapshot = async () => (await (await fetch(`${base}/api/live`)).json()).msgs[0];
@@ -277,7 +277,5 @@ test('agent sessions stay isolated and Codex and OpenCode tasks fork then resume
     proc.kill();
     await new Promise((resolve) => proc.once('exit', resolve));
     fs.rmSync(dir, { recursive: true, force: true });
-    const build = path.resolve(dist); assert.ok(build.startsWith(process.cwd() + path.sep));
-    fs.rmSync(build, { recursive: true, force: true });
   }
 });

@@ -9,9 +9,9 @@ import { once } from 'node:events';
 import { dangerKey } from '../../src/shared/danger.js';
 
 test('Office approvals, Antigravity resume and conversation history work across agents and server restarts', { timeout: 90000 }, async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'office-protocol-integration-')), dist = '.next-agent-test-' + path.basename(dir);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'office-protocol-integration-'));
   const fixture = new URL('../fixtures/agent-rpc.mjs', import.meta.url).href;
-  const env = { ...process.env, HOME: dir, USERPROFILE: dir, CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), CODEX_HOME: path.join(dir, 'codex'), OFFICE_AI_ACCOUNTS: '0', OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '0', OFFICE_DATA_DIR: dir, OFFICE_HOST: '127.0.0.1', OFFICE_DIST_DIR: dist };
+  const env = { ...process.env, HOME: dir, USERPROFILE: dir, CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), CODEX_HOME: path.join(dir, 'codex'), OFFICE_AI_ACCOUNTS: '0', OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '0', OFFICE_DATA_DIR: dir, OFFICE_HOST: '127.0.0.1', OFFICE_NO_NEXT: '1' };
   for (const agent of ['codex', 'opencode', 'antigravity']) {
     const script = path.join(dir, agent + '.mjs');
     fs.writeFileSync(script, `import {serveFakeAgent} from ${JSON.stringify(fixture)};await serveFakeAgent({agent:${JSON.stringify(agent)},sid:'owned',capture:${JSON.stringify(path.join(dir, agent + '.calls'))}});`);
@@ -24,7 +24,7 @@ test('Office approvals, Antigravity resume and conversation history work across 
   const until = async (fn, ms = 10000) => { const end = Date.now() + ms; while (Date.now() < end) { const x = await fn(); if (x) return x; await wait(); } assert.fail('timed out'); };
   let server;
   const start = async () => {
-    server = spawn(process.execPath, ['server/index.mjs', '--dev'], { env, stdio: 'ignore', windowsHide: true });
+    server = spawn(process.execPath, ['server/index.mjs'], { env, stdio: 'ignore', windowsHide: true });
     await until(async () => { try { return (await fetch(base + '/health')).ok; } catch { return false; } }, 30000);
   };
   const stop = async () => { if (server?.exitCode === null && server.signalCode === null) { const ended = once(server, 'exit'); server.kill(); await ended; } };
@@ -67,6 +67,5 @@ test('Office approvals, Antigravity resume and conversation history work across 
     assert.equal(ocCalls.at(-1).start.method, 'session/load'); assert.equal(ocCalls.at(-1).start.params.sessionId, 'owned');
   } finally {
     await stop(); fs.rmSync(dir, { recursive: true, force: true });
-    const build = path.resolve(dist); assert.ok(build.startsWith(process.cwd() + path.sep)); fs.rmSync(build, { recursive: true, force: true });
   }
 });
