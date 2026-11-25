@@ -92,3 +92,36 @@ test('OpenCode 2 resumed sessions use their own project directory', async () => 
     assert.equal(events[0].cwd, '/actual-project');
   } finally { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
 });
+
+test('OpenCode 2 preserves execution success, failure and interruption semantics', async () => {
+  const events = [];
+  const server = http.createServer((req, res) => { const chunks = []; req.on('data', (c) => chunks.push(c)); req.on('end', () => { events.push(JSON.parse(Buffer.concat(chunks))); res.end('{}'); }); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  let release, done = new Promise((resolve) => { release = resolve; });
+  try {
+    const plugin = createOpenCode2Plugin(server.address().port);
+    const dispose = await plugin.setup({
+      session: { hook: async () => ({ dispose() {} }) },
+      event: {
+        subscribe: async function* () {
+          yield { type: 'session.execution.started', data: { sessionID: 's1' } };
+          yield { type: 'session.execution.succeeded', data: { sessionID: 's1' } };
+          yield { type: 'session.execution.started', data: { sessionID: 's2' } };
+          yield { type: 'session.execution.failed', data: { sessionID: 's2', error: { message: 'boom' } } };
+          yield { type: 'session.execution.started', data: { sessionID: 's3' } };
+          yield { type: 'session.execution.interrupted', data: { sessionID: 's3' } };
+          await done;
+        },
+      },
+    });
+    for (let i = 0; i < 40 && events.length < 6; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    release(); await dispose();
+    assert.deepEqual(events.map((x) => `${x.session_id}:${x.hook_event_name}`), [
+      's1:UserPromptSubmit', 's1:Stop',
+      's2:UserPromptSubmit', 's2:StopFailure',
+      's3:UserPromptSubmit', 's3:Interrupt',
+    ]);
+    assert.equal(events[3].error, 'boom');
+    assert.equal(events[5].interrupted, true);
+  } finally { release(); server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
+});

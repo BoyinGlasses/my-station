@@ -67,7 +67,19 @@ export const createOfficePlugin = (port = 4310) => async ({ directory }) => {
           }
           break;
         }
-        case 'session.error': await send(sid, 'StopFailure'); break;
+        case 'session.error': {
+          if (sid) statuses.set(sid, 'idle');
+          const msg = replies.get(sid); replies.delete(sid);
+          const err = typeof p.error === 'string' ? p.error : p.error?.message || p.reason || '';
+          await send(sid, 'StopFailure', { ...(msg ? { last_assistant_message: msg } : {}), ...(err ? { error: String(err) } : {}) });
+          break;
+        }
+        case 'session.interrupted': {
+          if (sid) statuses.set(sid, 'idle');
+          const msg = replies.get(sid); replies.delete(sid);
+          await send(sid, 'Interrupt', { interrupted: true, ...(msg ? { last_assistant_message: msg } : {}) });
+          break;
+        }
       }
     },
     'tool.execute.before': async (input, output) => send(input.sessionID, 'PreToolUse', { tool_name: input.tool, tool_input: output.args }),
@@ -103,7 +115,9 @@ export const createOpenCode2Plugin = (port = 4310) => ({
           if (type === 'session.deleted') known.delete(data.sessionID);
         } else await remember(data.sessionID);
         if (type === 'session.execution.started') { type = 'session.status'; properties = { ...data, status: { type: 'busy' } }; }
-        else if (['session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted'].includes(type)) { type = 'session.status'; properties = { ...data, status: { type: 'idle' } }; }
+        else if (type === 'session.execution.succeeded') { type = 'session.status'; properties = { ...data, status: { type: 'idle' } }; }
+        else if (type === 'session.execution.failed') { type = 'session.error'; properties = { ...data, error: data.error || data.reason || 'failed' }; }
+        else if (type === 'session.execution.interrupted') { type = 'session.interrupted'; properties = data; }
         else if (type === 'form.created') { type = 'question.asked'; properties = data.form || {}; }
         await hooks.event({ event: { type, properties } });
       }
