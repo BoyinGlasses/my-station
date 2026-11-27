@@ -9,11 +9,11 @@ import { queueUi, renderFeed, toast } from '../ui/activity.js';
 import { closeSession } from '../ui/session-drawer.js';
 import { closeMac } from '../ui/mac-drawer.js';
 import { fp } from '../interact/first-person.js';
-import { TOKEN } from '../net/live.js';
+import { TOKEN, applyMsg, connect, dropSessionNow, liveES } from '../net/live.js';
 import { unseenDone } from '../life/your-turn.js';
 import { fails } from '../life/incidents.js';
 import { perms, renderPerms } from '../ui/permissions.js';
-import { DEMO, applyMsg, connect, dropSessionNow, liveES } from '../demo/demo.js';
+import { DEMO } from '../demo/demo.js';
 import { recAuto, recorder, stopRecording } from './timeline.js';
 import { t as tr } from '../../i18n/index.js';
 

@@ -6,8 +6,8 @@ import { wxChip } from '../life/weather.js';
 import { renderSessionHead } from './session-drawer.js';
 import { loadMac, pollMac } from './mac-drawer.js';
 import { sessions, workers } from '../people/workers.js';
-import { upsertSession } from '../net/live.js';
-import { applyMsg, demoTimers } from '../demo/demo.js';
+import { applyMsg, upsertSession } from '../net/live.js';
+import { demoTimers } from '../demo/demo.js';
 
 export function setup() {
   const now = () => hhmm(officeNow().getTime()) + wxChip();

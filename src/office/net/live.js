@@ -2,15 +2,25 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { state } from '../core/state.js';
-import { $, el, short } from '../core/env.js';
+import { $, el, replay, short } from '../core/env.js';
 import { scene } from '../scene/renderer.js';
 import { CHAIR_IDLE, DESKS, PODS, UNITS, chairs, unitOfDesk } from '../world/desks.js';
 import { canvasTex } from '../scene/blocks.js';
 import { DEPTS } from '../world/layout.js';
 import { DEPT_SIGNS } from '../world/pro/wing.js';
 import { PALETTE, addWorker, dn, dropSub, hash, leaving, leavingIds, sessions, spawnSub, subs, trimLeaving, workers } from '../people/workers.js';
-import { queueUi } from '../ui/activity.js';
-import { closeSession } from '../ui/session-drawer.js';
+import { addFeed, queueFeed, queueUi, renderFeed, toast } from '../ui/activity.js';
+import { closeSession, drM } from '../ui/session-drawer.js';
+import { acctLogin, acctMoved, acctSwitched, limitWarned, liveWindows, loadMac, renderLimits, renderMac } from '../ui/mac-drawer.js';
+import { renderAi, setAi } from '../ui/ai-accounts.js';
+import { onTodos } from '../ui/whiteboard.js';
+import { chatAct, chatApply, chatLeft, chatLoad } from '../ui/group-chat.js';
+import { setTrophies } from '../life/trophies.js';
+import { setLiftService } from '../life/lift-service.js';
+import { onEvent } from '../life/incidents.js';
+import { onPerm, perms, renderPerms, reportPresence } from '../ui/permissions.js';
+import { renderPhone } from '../ui/topbar.js';
+import { setTenure } from '../people/farewell.js';
 import { t as tr } from '../../i18n/index.js';
 import { projectOf } from '../../shared/path-label.js';
 
@@ -136,6 +146,113 @@ function areaRug(u) {
   const m = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: rugTex, transparent: true, depthWrite: false, roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -1 }));
   m.position.set((x0 + x1) / 2, 0.012, (z0 + z1) / 2); m.visible = false; m.receiveShadow = true; m.userData.dynamic = true; scene.add(m);
   return m;
+}
+
+export function dropSessionNow(id) {
+  const s = sessions.get(id); sessions.delete(id); freeDesk(id);
+  const w = workers.get(id);
+  if (w) { workers.delete(id); for (const [aid, sw] of subs) if (sw.parent === w) { subs.delete(aid); sw.remove(); } w.remove(); }
+  if (s && s.desk >= 0) chairs[s.desk].color.set(CHAIR_IDLE);
+  if (state.selectedId === id) closeSession();
+}
+
+// a newer office than this page (it was updated and restarted): load it, once nothing typed would be lost
+function reloadSoon() {
+  const typing = () => document.activeElement?.matches?.('input, textarea') || [...document.querySelectorAll('textarea')].some((t) => t.value.trim());
+  if (typing()) { setTimeout(reloadSoon, 5000); return; }
+  location.reload();
+}
+// a translation that arrived after its event: swap the words in bubbles, the feed and the session list
+function relabel(from, to) {
+  if (!from || !to) return;
+  for (const w of [...workers.values(), ...subs.values()]) if (w.lastSay?.text?.includes(from) && w.bubbleObj.visible) w.say(w.lastSay.type, w.lastSay.text.replace(from, to), w.lastSay.kind);
+  for (const e of state.feed) { if (e.label === from) e.label = to; if (e.desc === from) e.desc = to; }
+  for (const s of sessions.values()) for (const o of [s, ...(s.subs || [])]) { if (o.last?.label === from) o.last.label = to; if (o.desc === from) o.desc = to; }
+  queueFeed(); queueUi();
+}
+// One handler for the live stream and for replays. `quiet` (fast-forwarding a replay) places people without walking
+// and fills the feed without bubbles or animations.
+export function applyMsg(d, quiet = false) {
+  if (d.k === 'snap' || d.k === 'lang') {
+    if (d.lang && d.lang !== document.documentElement.lang && !new URLSearchParams(location.search).has('lang')) { location.reload(); return; }
+    if (d.k === 'lang') return;
+  }
+  if (d.k === 'snap') {
+    const ids = new Set(d.sessions.map((s) => s.id));
+    for (const id of [...sessions.keys()]) if (!ids.has(id)) (quiet ? dropSessionNow : removeSession)(id);
+    for (const s of d.sessions) upsertSession(s, false);
+    state.feed = d.feed || []; state.stats = d.stats || {}; renderFeed();
+    if ('local' in d) {
+      perms.clear(); for (const p of d.perms || []) perms.set(p.id, p); renderPerms(); reportPresence();
+      if (!quiet) chatLoad();
+      state.isLocal = !!d.local; state.lanUrl = d.lan || null; state.lanBase = d.lanBase || null; state.phonePin = d.pin || null; state.tsUrl = d.ts || null; state.tsHere = !!d.tsHere; state.phoneApprove = !!d.phoneApprove; state.phoneTasks = !!d.phoneTasks; state.lanFixed = !!d.lanFixed;
+      if (d.build) { if (state.build && d.build !== state.build) reloadSoon(); else state.build = d.build; }
+      state.todos = d.todos || []; onTodos();
+      if (d.trophies) setTrophies(d.trophies);
+      if (d.lift) setLiftService(d.lift);
+      state.limits = d.limits || null; state.limitsNote = d.limitsNote || ''; for (const w of liveWindows()) if (w.pct >= 80) limitWarned.add(`${w.key}:${w.resetsAt}:${w.pct >= 95 ? 95 : 80}`); renderLimits();
+      setAi(d.ai);
+      $('btn-phone').hidden = false; if ($('btn-phone-top')) $('btn-phone-top').hidden = !state.isLocal;
+      $('btn-bell').hidden = !('Notification' in window) || !window.isSecureContext;
+    }
+    state.connectedOnce = true; queueUi();
+  } else if (d.k === 'sess') { upsertSession(d.s, !quiet); if (d.stats) state.stats = d.stats; }
+  else if (d.k === 'gone') { if (!quiet) chatLeft(sessions.get(d.id)); (quiet ? dropSessionNow : removeSession)(d.id); }
+  else if (d.k === 'ev') {
+    if (d.stats) state.stats = d.stats; upsertSession(d.s, !quiet);
+    if (!quiet) onEvent(d.e); else if (!d.e.quiet && d.e.type !== 'start') addFeed(d.e);
+  }
+  else if (d.k === 'stats') { state.stats = d.stats; if (d.s) upsertSession(d.s, !quiet); }
+  else if (d.k === 'perm') onPerm(d.p);
+  else if (d.k === 'permDone') { perms.delete(d.id); renderPerms(); }
+  else if (d.k === 'todos') { state.todos = d.todos || []; onTodos(); }
+  else if (d.k === 'phone') { state.phoneApprove = !!d.approve; state.phoneTasks = !!d.tasks; for (const c of [...$('perm-stack').children]) c.remove(); renderPerms(); reportPresence(); if (!$('phone-modal').hidden) renderPhone(); }
+  else if (d.k === 'acctlogin') acctLogin(d);
+  else if (d.k === 'acctswitch') acctSwitched(d);
+  else if (d.k === 'acctmove') { if (!quiet) acctMoved(d); }
+  else if (d.k === 'chat') chatApply(d);
+  else if (d.k === 'chatact') { if (!quiet) chatAct(d.what); }
+  else if (d.k === 'limits') { state.limits = d.limits || null; state.limitsNote = d.note || ''; renderLimits(); renderAi(); if (!drM.hidden) renderMac(); }
+  else if (d.k === 'ai') setAi(d.ai);
+  else if (d.k === 'sysauto') { if (!quiet) { toast(d.message, 8000); loadMac(); } }
+  else if (d.k === 'trophies') setTrophies(d.t, quiet ? [] : d.earned || []);
+  else if (d.k === 'tenure') setTenure(d);
+  else if (d.k === 'vi') relabel(d.from, d.to);
+}
+
+export let liveES = null;
+const VIA_TUNNEL = typeof location !== 'undefined' && /\.trycloudflare\.com$/.test(location.hostname);
+function ask() {
+  const stop = new AbortController();
+  liveES = { close: () => stop.abort() };
+  (async () => {
+    let since = -1, fails = 0;
+    while (!stop.signal.aborted) {
+      if (document.hidden) await new Promise((ok) => document.addEventListener('visibilitychange', ok, { once: true }));
+      try {
+        const r = await fetch(`/api/live?since=${since}${TOKEN ? `&k=${encodeURIComponent(TOKEN)}` : ''}`, { cache: 'no-store', signal: stop.signal });
+        if (r.status === 401) { location.reload(); return; }
+        const j = await r.json();
+        fails = 0; setConn(true); since = j.seq;
+        if (!replay.on) for (const d of j.msgs) applyMsg(d);
+      } catch {
+        if (stop.signal.aborted) return;
+        setConn(false); await new Promise((ok) => setTimeout(ok, Math.min(15_000, 1000 * 2 ** fails++)));
+      }
+    }
+  })();
+}
+export function connect() {
+  if (VIA_TUNNEL) { ask(); return; }
+  const es = new EventSource(`/stream${TOKEN ? `?k=${encodeURIComponent(TOKEN)}` : ''}`);
+  liveES = es;
+  es.onopen = () => setConn(true);
+  es.onerror = () => setConn(false);
+  es.onmessage = (m) => {
+    if (replay.on) return;
+    let d; try { d = JSON.parse(m.data); } catch { return; }
+    applyMsg(d);
+  };
 }
 
 export function setup() {
