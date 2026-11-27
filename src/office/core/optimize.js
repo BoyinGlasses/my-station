@@ -134,7 +134,7 @@ export function setup() {
   syncToggles();
   merged = optimizeStatic();
   if (lite) setLite(true);
-  { const warm = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), hlMat); warm.position.set(0, -5, 0); scene.add(warm); renderer.compile(scene, camera); scene.remove(warm); }
+  { const warm = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), hlMat); warm.position.set(0, -5, 0); scene.add(warm); renderer.compile(scene, camera); scene.remove(warm); warm.geometry.dispose(); }
   if (new URLSearchParams(location.search).has('debug')) console.info('office meshes', merged);
   if (SOFTWARE_GL) setTimeout(() => toast(tr('world.softwareGl'), 6000), 1500);
   loop();
