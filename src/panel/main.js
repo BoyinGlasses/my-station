@@ -19,7 +19,9 @@ const post = (path, body) => fetch(q(path), { method: 'POST', headers: { 'Conten
 const PAGE = Math.random().toString(36).slice(2, 10);
 const PERM_VERB = new Set(['bash', 'edit', 'write', 'web', 'fetch', 'mcp', 'agent', 'read']);
 
-const S = { sessions: new Map(), perms: new Map(), limits: null, ai: null, local: false, live: false };
+const STATIC = process.env.NEXT_PUBLIC_OFFICE_STATIC === '1';
+const VIA_TUNNEL = typeof location !== 'undefined' && /\.trycloudflare\.com$/.test(location.hostname);
+const S = { sessions: new Map(), perms: new Map(), limits: null, ai: null, local: false, live: false, build: '' };
 const drafts = new Map();  // (a question's picks and typed words, a plan's note, per request: kept over every redraw)
 const draftOf = (p) => { let d = drafts.get(p.id); if (!d) { d = { sel: (p.questions || []).map(() => []), other: (p.questions || []).map(() => ''), note: '' }; drafts.set(p.id, d); } return d; };
 const armed = new Set();   // (a risky command's "allow", pressed once: the second press sends it)
@@ -202,9 +204,16 @@ function draw() {
 
 /* ---------- the live stream ---------- */
 function apply(d) {
+  if (d.k === 'snap' || d.k === 'lang') {
+    if (d.lang && d.lang !== document.documentElement.lang && !new URLSearchParams(location.search).has('lang')) { location.reload(); return; }
+    if (d.k === 'lang') return;
+  }
   if (d.k === 'snap') {
     S.sessions = new Map((d.sessions || []).map((s) => [s.id, s]));
-    if ('local' in d) { S.local = !!d.local; S.perms = new Map((d.perms || []).map((p) => [p.id, p])); S.limits = d.limits || null; S.ai = d.ai || null; }
+    if ('local' in d) {
+      S.local = !!d.local; S.perms = new Map((d.perms || []).map((p) => [p.id, p])); S.limits = d.limits || null; S.ai = d.ai || null;
+      if (d.build) { if (S.build && d.build !== S.build) { location.reload(); return; } S.build = d.build; }
+    }
   } else if (d.k === 'sess' || d.k === 'ev' || d.k === 'stats') { if (d.s) S.sessions.set(d.s.id, d.s); }
   else if (d.k === 'gone') S.sessions.delete(d.id);
   else if (d.k === 'perm') S.perms.set(d.p.id, d.p);
@@ -214,7 +223,28 @@ function apply(d) {
   else return;
   draw();
 }
+function ask() {
+  (async () => {
+    let since = -1, fails = 0;
+    while (true) {
+      if (document.hidden) await new Promise((ok) => document.addEventListener('visibilitychange', ok, { once: true }));
+      try {
+        const r = await fetch(q(`/api/live?since=${since}`), { cache: 'no-store' });
+        if (r.status === 401) { location.reload(); return; }
+        const j = await r.json();
+        fails = 0; S.live = true; since = j.seq;
+        for (const d of j.msgs || []) apply(d);
+        draw();
+      } catch {
+        S.live = false; draw();
+        await new Promise((ok) => setTimeout(ok, Math.min(15_000, 1000 * 2 ** fails++)));
+      }
+    }
+  })();
+}
 function connect() {
+  if (STATIC) return;
+  if (VIA_TUNNEL) { ask(); return; }
   const es = new EventSource(q('/stream'));
   es.onopen = () => { S.live = true; draw(); };
   es.onmessage = (m) => { try { apply(JSON.parse(m.data)); } catch { /* not ours */ } };
@@ -222,16 +252,20 @@ function connect() {
 }
 // looked at: on screen and focused (the editor's side bar once clicked into, the menu bar's popover while open)
 function presence() {
+  if (STATIC) return;
   const focused = document.visibilityState === 'visible' && document.hasFocus();
   fetch(q('/api/presence'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page: PAGE, focused }), keepalive: true }).then((r) => r.body?.cancel()).catch(() => {});
 }
 
+let started = false;
 export function startPanel() {
+  if (started) return;
+  started = true;
   const embed = new URLSearchParams(location.search).get('embed') || '';
   document.documentElement.dataset.embed = embed;
   for (const b of document.querySelectorAll('[data-open]')) b.addEventListener('click', () => post('/api/panel/open', { what: b.dataset.open }));
   for (const ev of ['focus', 'blur', 'visibilitychange']) addEventListener(ev, presence);
-  addEventListener('pagehide', () => { try { navigator.sendBeacon(q('/api/presence'), new Blob([JSON.stringify({ page: PAGE, focused: false })], { type: 'application/json' })); } catch { /* gone */ } });
+  addEventListener('pagehide', () => { if (STATIC) return; try { navigator.sendBeacon(q('/api/presence'), new Blob([JSON.stringify({ page: PAGE, focused: false })], { type: 'application/json' })); } catch { /* gone */ } });
   setInterval(() => { if (document.hasFocus()) presence(); }, 2000);
   setInterval(tick, 1000);
   startQuota(); startMac(macBox, { q }); startKeys();

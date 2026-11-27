@@ -268,7 +268,15 @@ function buildWorld() {
   if (state.world) return;
   state.world = true;
   const late = done.size > 0;
-  for (const m of MODULES) if (!done.has(m)) { m.setup(); done.add(m); }
+  try {
+    for (const m of MODULES) if (!done.has(m)) { m.setup(); done.add(m); }
+  } catch (err) {
+    console.error('3D world init failed, falling back to 2D list:', err);
+    state.world = false;
+    for (const m of MODULES) if (LIST.has(m) && !done.has(m)) { m.setup(); done.add(m); }
+    uiSettings.syncToggles(); uiLite.setLite(true);
+    return;
+  }
   if (!late) return;
   for (const s of [...peopleWorkers.sessions.values()]) netLive.upsertSession(s, false);
   uiMacDrawer.loadMac();
