@@ -27,6 +27,7 @@ import { createApprovals } from './approvals.mjs';
 import { createClaudeAccounts } from './claude-accounts.mjs';
 import { createGuards, EDIT_TOOLS, UNDO_TOOLS, fileOf, portInUse, LOOP_MIN, LOOP_N } from './guards.mjs';
 import { createWork } from './work.mjs';
+import { createReplay } from './replay.mjs';
 import { createVault } from './vault.mjs';
 import { MAIN, SUB, modelsOf, withModels, hasSplit, withSplit } from './models.mjs';
 import { createCodexAccounts } from './codex-accounts.mjs';
@@ -473,65 +474,14 @@ function broadcast(obj) {
   for (const c of clients) send(c.res, obj);
   backlog.push([++sent, JSON.stringify(obj)]); if (backlog.length > 400) backlog.shift();
   for (const w of waiting) w();
-  if (RECORDED.has(obj.k)) record(obj);
+  record(obj);
 }
 
-/* ---------- replay log ----------
-   What the office shows is appended to data/replay/YYYY-MM-DD.jsonl, one {t, m} per line: session changes and events as
-   broadcast (already redacted), plus a full snapshot when a file starts and at most every 10 minutes after, so a replay
-   can begin at any minute. Permission prompts are not kept. Files older than 7 days are deleted. */
-const REPLAY_DIR = path.join(DATA_DIR, 'replay');
-const REPLAY_KEEP_DAYS = 7;
-const RECORDED = new Set(['ev', 'sess', 'gone', 'stats']);
-fs.mkdirSync(REPLAY_DIR, { recursive: true });
-let rec = { day: '', out: null, snapAt: 0 };
-const replaySnap = () => ({ k: 'snap', sessions: [...sessions.values()].map(pub), feed: feed.slice(-40), stats });
-function record(m) {
-  const t = Date.now(), day = today();
-  if (day !== rec.day) {
-    rec.out?.end();
-    rec = { day, out: fs.createWriteStream(path.join(REPLAY_DIR, `${day}.jsonl`), { flags: 'a' }), snapAt: 0 };
-    rec.out.on('error', (err) => console.error('replay log', err.message));
-    pruneReplay();
-  }
-  rec.out.write(JSON.stringify({ t, m }) + '\n');
-  // the snapshot goes after the message, so it already contains it
-  if (t - rec.snapAt > 600_000) { rec.snapAt = t; rec.out.write(JSON.stringify({ t, m: replaySnap() }) + '\n'); }
-}
-function pruneReplay() {
-  const cut = new Date(Date.now() - REPLAY_KEEP_DAYS * 86400e3).toLocaleDateString('sv-SE');
-  fsp.readdir(REPLAY_DIR).then((names) => {
-    for (const n of names) if (/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n) && n.slice(0, 10) < cut) fsp.rm(path.join(REPLAY_DIR, n)).catch(() => {});
-  }).catch(() => {});
-}
-async function replayDays() {
-  const out = [];
-  for (const n of (await fsp.readdir(REPLAY_DIR).catch(() => [])).sort().reverse()) {
-    if (!/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)) continue;
-    const st = await fsp.stat(path.join(REPLAY_DIR, n)).catch(() => null);
-    if (st && st.size) out.push({ day: n.slice(0, 10), bytes: st.size });
-  }
-  return out;
-}
-// Lines from the last snapshot at or before `from` up to `to`: the page fast-forwards through the part before `from`.
-async function replayRange(day, from, to, max = 80_000) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { items: [], truncated: false };
-  const file = path.join(REPLAY_DIR, `${day}.jsonl`);
-  let items = [], truncated = false;
-  const rl = (await import('node:readline')).createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
-  try {
-    for await (const line of rl) {
-      if (!line) continue;
-      let x; try { x = JSON.parse(line); } catch { continue; }   // the line being written right now
-      if (x.t > to) break;
-      if (x.t <= from && x.m.k === 'snap') items = [];
-      items.push(x);
-      if (items.length >= max) { truncated = true; break; }
-    }
-  } catch { /* no file for that day */ }
-  finally { rl.close(); }
-  return { items, truncated };
-}
+const { dir: REPLAY_DIR, record, days: replayDays, range: replayRange } = createReplay({
+  dataDir: DATA_DIR,
+  today,
+  snapshot: () => ({ k: 'snap', sessions: [...sessions.values()].map(pub), feed: feed.slice(-40), stats }),
+});
 
 /* ---------- the company group chat (src/shared/chat-engine.js; the window: src/office/ui/group-chat*.js) ----------
    One conversation for every page, kept here (data/chat.json): what the sessions say about their work comes straight
