@@ -24,7 +24,8 @@ fs.rmSync(SITE, { recursive: true, force: true });
 fs.rmSync(path.dirname(WORK), { recursive: true, force: true });
 fs.mkdirSync(WORK, { recursive: true });
 for (const s of SOURCES) if (fs.existsSync(path.join(ROOT, s))) fs.cpSync(path.join(ROOT, s), path.join(WORK, s), { recursive: true });
-fs.symlinkSync(path.relative(WORK, path.join(ROOT, 'node_modules')), path.join(WORK, 'node_modules'));
+const nmTarget = path.join(ROOT, 'node_modules');
+fs.symlinkSync(process.platform === 'win32' ? nmTarget : path.relative(WORK, nmTarget), path.join(WORK, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
 
 for (const lang of [DEFAULT_LANG, ...Object.keys(LANGS).filter((l) => l !== DEFAULT_LANG)]) {
   const sub = lang === DEFAULT_LANG ? '' : `/${lang}`, out = `out-${lang}`;
