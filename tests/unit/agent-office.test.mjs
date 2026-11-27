@@ -7,6 +7,7 @@ import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { dangerKey } from '../../src/shared/danger.js';
+import { stopProcess } from '../../server/agent-rpc.mjs';
 
 test('Office approvals, Antigravity resume and conversation history work across agents and server restarts', { timeout: 90000 }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'office-protocol-integration-'));
@@ -27,7 +28,7 @@ test('Office approvals, Antigravity resume and conversation history work across 
     server = spawn(process.execPath, ['server/index.mjs'], { env, stdio: 'ignore', windowsHide: true });
     await until(async () => { try { return (await fetch(base + '/health')).ok; } catch { return false; } }, 30000);
   };
-  const stop = async () => { if (server?.exitCode === null && server.signalCode === null) { const ended = once(server, 'exit'); server.kill(); await ended; } };
+  const stop = async () => { if (server?.exitCode === null && server.signalCode === null) { const ended = once(server, 'exit'); stopProcess(server); await ended; } };
   const post = (route, body) => fetch(base + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const snapshot = async () => (await (await fetch(base + '/api/live')).json()).msgs[0];
   const idle = () => until(async () => !(await (await fetch(base + '/api/tasks')).json()).running.length);

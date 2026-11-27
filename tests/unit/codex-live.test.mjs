@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
+import { stopProcess } from '../../server/agent-rpc.mjs';
 
 test('agent sessions stay isolated and Codex and OpenCode tasks fork then resume their own branches', async () => {
   const socket = net.createServer();
@@ -274,8 +275,11 @@ test('agent sessions stay isolated and Codex and OpenCode tasks fork then resume
     assert.doesNotMatch(failedReply.text, /example-secret-value/);
     assert.ok(chat.some((m) => m.kind === 'work' && m.work?.state === 'fail'));
   } finally {
-    proc.kill();
-    await new Promise((resolve) => proc.once('exit', resolve));
+    if (proc.exitCode === null && proc.signalCode === null) {
+      const exited = new Promise((resolve) => proc.once('exit', resolve));
+      stopProcess(proc);
+      await exited;
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
