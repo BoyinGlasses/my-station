@@ -1,37 +1,9 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
-import Script from 'next/script';
 import { getLang, getT } from '@/i18n/server';
-// One stylesheet per area of the screen, in cascade order (later files override earlier ones).
+// Shared font declarations and design tokens; 3D office stylesheets live in app/(office)/layout.tsx.
 import '@/styles/fonts.css';
 import '@/styles/base.css';
-import '@/styles/topbar.css';
-import '@/styles/topbar-plan.css';
-import '@/styles/sidebars.css';
-import '@/styles/activity.css';
-import '@/styles/sessions.css';
-import '@/styles/streamer.css';
-import '@/styles/permissions.css';
-import '@/styles/stage.css';
-import '@/styles/labels.css';
-import '@/styles/lite.css';
-import '@/styles/timeline.css';
-import '@/styles/places.css';
-import '@/styles/csgt.css';
-import '@/styles/todos.css';
-import '@/styles/drawers.css';
-import '@/styles/chat.css';
-import '@/styles/group-chat.css';
-import '@/styles/mac.css';
-import '@/styles/burn.css';
-import '@/styles/vault.css';
-import '@/styles/modal.css';
-import '@/styles/replay.css';
-import '@/styles/photo.css';
-import '@/styles/tips.css';
-import '@/styles/settings.css';
-import '@/styles/responsive.css';
-import '@/styles/phone.css';
 
 /* The page's title, description and share card (the image and icons are files in app/: opengraph-image.jpg,
    twitter-image.jpg, icon.svg, favicon.ico, apple-icon.png). The online demo knows its address (OFFICE_SITE_URL, set by
@@ -61,8 +33,6 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html lang={await getLang()} data-os={process.env.OFFICE_STATIC === '1' ? 'darwin' : process.platform}>
       <body>
         {children}
-        {/* QR codes for "open on your phone" (qrcode.js, MIT), kept local so the office works offline */}
-        <Script src={`${process.env.NEXT_PUBLIC_BASE_PATH || ''}/assets/vendor/qrcode.min.js`} strategy="afterInteractive" />
       </body>
     </html>
   );
