@@ -223,8 +223,14 @@ export function createChatEngine(ctx) {
     if (wd === 1 && hm(d) >= 820 && hm(d) < 855 && once('standupRemind')) remind('hr', tr('chat.life.standupTitle'), at(d, 9, 0), 'week');
     if (wd % 6 && hm(d) >= 1045 && hm(d) < 1130 && once('lunch')) poll(anyone() || 'reception', tr('chat.life.lunchPoll'), tr('chat.life.lunchOpts', null, 'list'));
     if (wd === 5 && hm(d) >= 1530 && hm(d) < 1555 && once('teaRemind')) remind('hr', tr('chat.life.teaTitle'), at(d, 16, 0), 'week');
-    // a reminder that has come round: the app's own line for it
-    for (const m of st.msgs) if (m.kind === 'remind' && !m.remind.done && m.remind.at <= ctx.now()) { m.remind.done = true; update(m); system(tr('chat.sys.remindNow', { title: m.remind.title })); }
+    // a reminder that has come round: the app's own line for it (weekly ones roll forward a week instead of ending)
+    for (const m of st.msgs) if (m.kind === 'remind' && !m.remind.done && m.remind.at <= ctx.now()) {
+      if (m.remind.repeat === 'week') {
+        while (m.remind.at <= ctx.now()) m.remind.at += 7 * 86400e3;
+        m.remind.yes = []; m.remind.no = [];
+      } else m.remind.done = true;
+      update(m); system(tr('chat.sys.remindNow', { title: m.remind.title }));
+    }
   }
 
   return { state: st, who, byId, say, system, send, working, workCard, setWork, loopCard, setLoop, ciCard, setCi, denyCard, setDeny, react, vote, rsvp, poll, remind, pin, recall, photo, onEvent, onLeft, onMoved, clock, fresh };
