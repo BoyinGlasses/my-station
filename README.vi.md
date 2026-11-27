@@ -21,21 +21,22 @@ Chạy được trên macOS, Linux và Windows (bảng máy đọc từng hệ �
 ## Cài
 
 ```bash
-npm install -g claude-my-office   # (lệnh nó cài là my-office)
-my-office install --service   # thêm hook vào ~/.claude/settings.json + chạy nền khi đăng nhập
-my-office doctor              # kiểm tra Node, curl, server, đủ hook, dịch vụ nền
-```
-
-Thử không cần cài: `npx claude-my-office start` (hook vẫn cần `npx claude-my-office install`). Cài bằng npm thì dữ liệu (cài đặt, mã
-PIN điện thoại, kho lịch sử) nằm ở `~/.my-office`, nên nâng bản (`npm install -g claude-my-office@latest`) không mất gì.
-
-Cài từ mã nguồn (để sửa code):
-
-```bash
 git clone https://github.com/BoyinGlasses/my-station.git && cd my-station
 npm install
-node bin/cli.mjs install --service   # cùng các lệnh như `my-office …`, dữ liệu ở data/
+npm run build
+node bin/cli.mjs install --service   # thêm hook vào ~/.claude/settings.json + chạy nền khi đăng nhập
+node bin/cli.mjs doctor              # kiểm tra Node, server, đủ hook, dịch vụ nền
 ```
+
+Cài lệnh toàn cục từ mã nguồn này (`my-station` và `my-office`, giữ dữ liệu tại `~/.my-office`):
+
+```bash
+npm link   # hoặc: npm install -g .
+my-station install --service
+my-station doctor
+```
+
+> Gói `claude-my-office` gốc trên npm chưa có phần đa-agent và hỗ trợ Windows của My Station — hãy cài từ repo này.
 
 `install` sao lưu `settings.json` trước khi sửa và chỉ thêm hook của My Office (chạy lại không thêm trùng). Gỡ: `my-office uninstall` (cài từ mã nguồn: `node bin/cli.mjs uninstall`).
 
