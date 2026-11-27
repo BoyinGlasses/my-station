@@ -7,9 +7,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+fs.rmSync(path.join(ROOT, '.next'), { recursive: true, force: true });
 execFileSync(process.execPath, [path.join(ROOT, 'node_modules', 'next', 'dist', 'bin', 'next'), 'build'],
   { cwd: ROOT, stdio: 'inherit', env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1', OFFICE_DIST_DIR: '', OFFICE_STATIC: '' } });
+const rootVariants = [...new Set([ROOT, JSON.stringify(ROOT).slice(1, -1), ROOT.replace(/\\/g, '/')])];
 for (const f of ['required-server-files.json', 'required-server-files.js']) {
   const p = path.join(ROOT, '.next', f);
-  try { fs.writeFileSync(p, fs.readFileSync(p, 'utf8').split(ROOT).join('.')); } catch { /* not written by this version */ }
+  try {
+    let text = fs.readFileSync(p, 'utf8');
+    for (const v of rootVariants) text = text.split(v).join('.');
+    fs.writeFileSync(p, text);
+  } catch { /* not written by this version */ }
 }
