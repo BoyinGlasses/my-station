@@ -25,6 +25,7 @@ import { editorByDot, claudeEditorSettings } from './editors.mjs';
 import { createTranslator } from './translate.mjs';
 import { createAuth, KEEP_DAYS } from './auth.mjs';
 import { createTunnel } from './tunnel.mjs';
+import { createApprovals } from './approvals.mjs';
 import { createUndo, EDIT_TOOLS as UNDO_TOOLS } from './undo.mjs';
 import { createVault } from './vault.mjs';
 import { MAIN, SUB, modelsOf, withModels, hasSplit, withSplit } from './models.mjs';
@@ -37,7 +38,6 @@ import { scanUsage, blankUsage, ctxMax } from './usage.mjs';
 import next from 'next';
 import { buildTimeline } from '../src/shared/timeline.js';
 import { dangerKey } from '../src/shared/danger.js';
-import { holdPlan, createBarWatch, backAtMac, PHONE_HOLD_MS, BACK_SEC } from './mac-hold.mjs';
 import { createChatEngine, REACTIONS } from '../src/shared/chat-engine.js';
 import { createTasks } from './tasks.mjs';
 import { listModels } from './models.mjs';
@@ -1301,184 +1301,18 @@ async function autoCloseIdle() {
 }
 setInterval(() => { autoCloseIdle().catch(() => {}); }, 5 * 60_000).unref();
 
-/* ---------- approve / deny from the office ----------
-   A synchronous PermissionRequest hook (curl) posts here. The request is held only while an office page has focus:
-   pages report focus every 2 s and on blur, so a prompt in the IDE or terminal is never held up by a page nobody is
-   looking at. Unanswered after 45 s, the page blurred, or the hook went away: the reply is empty and Claude Code shows
-   its own prompt as usual. "Always allow" echoes Claude Code's own suggestion back (documented).
-   Away from the Mac (no key or mouse for 2 minutes) with approving from a phone on and a phone subscribed to push, the
-   phone holds it instead (server/mac-hold.mjs): a push at once, held as long as the hook waits (its X-Office-Wait header,
-   10 minutes since `my-office install` sets it; 45 s for a hook from before), whatever page has focus, and handed back to
-   Claude Code as soon as a key or the mouse moves on the Mac.
-   A phone's work running as a background session has a hook of its own that waits (`?long=1`, server/bg-sessions.mjs):
-   held with no deadline until answered (on the phone, in the office), whoever looks; its usual hook is answered at once.
-   OFFICE_HOLD_MS shortens the 45 s for the tests. */
-const HOLD_MS = Math.min(45_000, Number(process.env.OFFICE_HOLD_MS) || 45_000);
-const presence = new Map();   // page id -> { focused, at }
-const officeFocused = () => {
-  const now = Date.now();
-  let focused = false;
-  for (const [k, p] of presence) {
-    if (now - p.at >= 30_000) presence.delete(k);
-    else if (p.focused && now - p.at < 5000) focused = true;
-  }
-  return focused;
-};
-/* The menu bar app holds requests too, when the owner is at the Mac (server/mac-hold.mjs): it reads /api/panel every
-   3 s (that is its "alive"), and the Mac's idle time is read at most every 10 s while it does. OFFICE_IDLE_SEC fakes the
-   idle time (tests only). "Approve from the Mac's notifications" off (Settings → More): it never holds. */
-const barWatch = createBarWatch({ idle: () => (process.env.OFFICE_IDLE_SEC !== undefined ? Number(process.env.OFFICE_IDLE_SEC) : process.platform === 'darwin' ? idleSeconds() : Infinity) });
-const macApprove = () => prefs.get('macApprove') !== false;
-const phoneCanAnswer = () => !!prefs.get('phoneApprove') && push.count() > 0;
-const planNow = (idleSec, limit = HOLD_MS) => holdPlan({ focused: officeFocused(), barAlive: barWatch.alive(), idleSec, pref: macApprove(), normalMs: HOLD_MS,
-  phone: phoneCanAnswer(), phoneMs: Math.min(PHONE_HOLD_MS, limit) });
-/** who holds a request coming in now, and how long (the Mac's idle time read again when it is old) */
-const holdNow = async (limit) => planNow(await barWatch.fresh(), limit);
-const barHolds = () => !officeFocused() && planNow(barWatch.idleSec()).by === 'bar';
-/** how long the hook that posted may wait (ms): what its X-Office-Wait header says, less 5 s; a hook from before: 45 s */
-const hookLimit = (req) => { const w = Number(req.headers['x-office-wait']); return Number.isFinite(w) && w > 10 ? Math.min(PHONE_HOLD_MS, (w - 5) * 1000) : HOLD_MS; };
-// a request held for the phone goes back to Claude Code's prompt as soon as the owner is at the Mac again (read every 5 s)
-let backTimer = 0;
-function watchBack() {
-  if (backTimer) return;
-  backTimer = setInterval(async () => {
-    if (![...pending.values()].some((x) => x.phone)) { clearInterval(backTimer); backTimer = 0; return; }
-    const idle = await barWatch.fresh(4000);
-    if (backAtMac(idle)) for (const [id, x] of [...pending]) if (x.phone) giveBack(id, 'back');
-  }, 5000);
-  backTimer.unref?.();
-}
-/** the push for a request held for the phone: whatever page has focus (the owner is away from the Mac) */
-function phonePush(entry, text) {
-  const title = tr(entry.kind === 'ask' ? 'server.push.askTitle' : entry.kind === 'plan' ? 'server.push.planTitle' : 'server.push.waitTitle', { name: entry.name });
-  push.notify({ title, body: clip(text, 180), tag: `perm-${entry.id}`, url: '/', urgent: true }).catch(() => {});
-}
-const pending = new Map();    // request id -> held request
-/* Handing a request back to Claude Code's own prompt (in the IDE or the terminal: a phone can't answer it there). Each one is
-   written to the actions log with why, and a phone that answers it a moment later is told so (and why) instead of a bare
-   "expired" (server.api.wentBack). */
-const released = new Map();   // request id -> { at, why }: the last 100
-function noteBack(p, why) {
-  released.set(p.id, { at: Date.now(), why }); if (released.size > 100) released.delete(released.keys().next().value);
-  fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} back to Claude Code (${why}) ${p.kind || 'perm'} ${p.name} ${p.tool}${p.phone ? ' (held for the phone)' : ''}\n`).catch(() => {});
-}
-function giveBack(id, why) { const p = pending.get(id); if (!p) return; noteBack(p, why); settlePerm(id); }
-/* A request a page or the menu bar held, its time up or the page no longer looked at: when a phone can answer and nobody
-   is at the Mac (no key or mouse for BACK_SEC), it stays, for the phone (a push, the time its hook allows, back to Claude
-   Code the moment the Mac is touched), not handed to an IDE nobody is in front of. Otherwise back to Claude Code. */
-async function keepForPhone(id, why) {
-  const p = pending.get(id); if (!p || p.long) return;
-  const left = p.at + p.limit - Date.now();
-  if (!p.phone && phoneCanAnswer() && left > 15_000) {
-    const idle = await barWatch.fresh(4000);
-    if (!pending.has(id)) return;   // (answered while the Mac was read)
-    if (Number.isFinite(idle) && idle >= BACK_SEC) {
-      clearTimeout(p.timer); p.phone = true; p.until = p.at + p.limit;
-      p.timer = setTimeout(() => giveBack(id, 'timeout'), p.until - Date.now());
-      broadcast({ k: 'perm', p: permPub(p) });   // (the card's countdown: the phone's time now)
-      phonePush(p, p.pushText); watchBack();
-      return;
-    }
-  }
-  giveBack(id, why);
-}
-const permPub = (p) => ({ id: p.id, agent: p.agent || 'claude', sess: p.sess, name: p.name, tool: p.tool, type: p.type, label: p.label, detail: p.detail, remember: p.remember, at: p.at, until: p.until,
-  kind: p.kind || 'perm', questions: p.questions, plan: p.plan });
-function settlePerm(id, body = '') {
-  const p = pending.get(id); if (!p) return;
-  pending.delete(id); clearTimeout(p.timer);
-  if (p.resolve) p.resolve(body);
-  else try { p.res.writeHead(200, { 'Content-Type': 'application/json' }).end(body); } catch { /* hook already gone */ }
-  broadcast({ k: 'permDone', id });
-  if (p.task && ![...pending.values()].some((x) => x.task === p.task)) {
-    const card = cards.get(p.task); if (card) chat.setWork(card.id, { state: 'work', ask: null, perm: null });
-  }
-  // answered here: the session goes back to work (an empty reply means Claude Code now asks itself, still waiting)
-  const s = body && p.sess && [...sessions.values()].find((x) => x.id === p.sess);
-  if (s && s.status === 'wait' && ![...pending.values()].some((x) => x.sess === s.id)) { s.status = 'work'; broadcast({ k: 'sess', s: pub(s) }); }
-}
-function permDecision(p, choice) {
-  if (choice === 'deny') return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: tr('server.perm.denied') } } };
-  const decision = { behavior: 'allow' };
-  if (choice === 'always' && p.suggestion) decision.updatedPermissions = [p.suggestion];
-  return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } };
-}
-function permDetail(p) {
-  const i = p.tool_input || {};
-  const d = i.command || i.file_path || i.url || i.pattern || i.query || i.prompt || JSON.stringify(i);
-  return clip(redact(String(d)), 400);
-}
-function ruleText(sug) {
-  const r0 = sug.rules?.[0]; if (!r0) return null;
-  const where = ['session', 'localSettings', 'projectSettings', 'userSettings'].includes(sug.destination) ? tr(`server.rule.${sug.destination}`) : '';
-  return `${r0.toolName}${r0.ruleContent ? `(${clip(redact(r0.ruleContent), 60)})` : ''} ${where}`.trim();
-}
-// a phone's work running as a background session: which of its two hooks this is decides who answers (see above)
-function longHold(p, long) {
-  const t = (!p?.agent || p.agent === 'claude') && tasks.of(p?.session_id), bg = t?.mode === 'bg' ? t : null;
-  if (long) return bg ? { task: bg } : { skip: true };   // (its settings, but not a phone's work now: Claude Code goes on as usual)
-  return bg?.hooked ? { skip: true } : {};   // (its long-waiting hook carries this one)
-}
-async function taskPermission(t, request) {
-  const asking = request.kind === 'ask', qs = asking && Array.isArray(request.questions) ? request.questions.slice(0, 4) : [];
-  if (asking && (!qs.length || qs.some((q) => typeof q.id !== 'string' || typeof q.question !== 'string'))) return {};
-  const tool = asking ? { name: 'AskUserQuestion', input: { questions: qs } } : normalizeTool(t.agent, request.tool, request.input);
-  const c = asking ? { type: 'ask', label: tr('server.tool.ask') } : await classifyVi(tool.name, tool.input);
-  if (tool.name === 'Bash' && typeof tool.input.command !== 'string') return false;
-  if (t.stopped || t.ended) return false;
-  return new Promise((resolve) => {
-    const id = crypto.randomUUID(), now = Date.now(), s = bySid(`${t.agent}:${t.sid}`);
-    const entry = { id, agent: t.agent, task: t.id, sess: s?.id || null, name: t.from?.name || s?.name || t.agent,
-      tool: tool.name, type: c.type, label: c.label, detail: permDetail({ tool_input: tool.input }), at: now, until: now + HOLD_MS,
-      resolve: (body) => {
-        try {
-          const out = JSON.parse(body).hookSpecificOutput;
-          resolve(asking ? Object.fromEntries(qs.filter((q) => out.updatedInput?.answers?.[q.question]).map((q) => [q.id, { answers: [out.updatedInput.answers[q.question]] }])) : out.decision?.behavior === 'allow');
-        } catch { resolve(asking ? {} : false); }
-      } };
-    if (asking) {
-      entry.kind = 'ask'; entry.input = tool.input;
-      entry.questions = qs.map((q) => ({ header: clip(redact(oneLine(q.header)), 30), question: clip(redact(oneLine(q.question)), 400), multi: false,
-        options: (Array.isArray(q.options) ? q.options.slice(0, 6) : []).map((o) => ({ label: clip(redact(oneLine(o.label)), 80), description: clip(redact(oneLine(o.description)), 240) })) }));
-      entry.detail = entry.questions.map((q) => q.question).join('\n');
-    }
-    entry.timer = setTimeout(() => giveBack(id, 'timeout'), HOLD_MS);
-    pending.set(id, entry);
-    if (s) { s.status = 'wait'; broadcast({ k: 'sess', s: pub(s) }); }
-    broadcast({ k: 'perm', p: permPub(entry) });
-    const card = cards.get(t.id);
-    if (card) chat.setWork(card.id, { state: 'wait', ask: entry.detail, perm: id, risky: !!dangerKey(entry) });
-    pushOut({ title: tr('server.push.permTitle', { name: entry.name }), body: clip(`${c.label}: ${entry.detail}`, 180), tag: `perm-${id}`, url: '/', urgent: true });
-  });
-}
-async function onPermission(p, res, long = false, limit = HOLD_MS) {
-  const lh = longHold(p, long); if (lh.skip) { res.writeHead(200).end(''); return; }
-  // a run started from the office (a phone's work) may wait for a phone to answer even with no office open: they get a push
-  const agent = p?.agent === 'codex' ? 'codex' : 'claude';
-  const matchesRun = (t) => (t.from?.agent || 'claude') === agent && (t.sid === p.session_id || t.from?.sid === p.session_id);
-  const ours = !!p?.session_id && push.count() > 0 && !!prefs.get('phoneApprove') && tasks.list().some(matchesRun);
-  const plan = long ? { ms: 0, by: null } : await holdNow(limit), hold = plan.ms, forPhone = plan.by === 'phone';
-  if (!p || !p.session_id || ASK_TOOLS.has(p.tool_name) || (!hold && !ours && !long)) { res.writeHead(200).end(''); return; }
-  const sid = agent === 'codex' ? `codex:${p.session_id}` : p.session_id;
-  let s = bySid(sid); if (!s) { await scanSessions(); s = bySid(sid); }
-  const tool = normalizeTool(agent, p.tool_name, p.tool_input);
-  const c = await classifyVi(tool.name, tool.input);
-  const suggestion = agent === 'claude' && Array.isArray(p.permission_suggestions) ? p.permission_suggestions.find((x) => x && x.type === 'addRules' && x.behavior === 'allow') || null : null;
-  const id = crypto.randomUUID(), now = Date.now();
-  const entry = { id, res, agent, sess: s?.id || null, name: s?.name || base(p.cwd) || agent, tool: tool.name, type: c.type, label: c.label, detail: permDetail({ tool_input: tool.input }),
-    remember: suggestion ? ruleText(suggestion) : null, suggestion, at: now, until: long ? 0 : now + (hold || HOLD_MS), long, phone: forPhone, task: lh.task?.id || null,
-    limit: Math.min(PHONE_HOLD_MS, limit), pushText: `${c.label}: ${oneLine(permDetail(p))}` };
-  if (!long) entry.timer = setTimeout(() => keepForPhone(id, 'timeout'), hold || HOLD_MS);   // (the long one: until answered, or its hook gives up)
-  pending.set(id, entry);
-  res.on('close', () => { if (pending.get(id) === entry) { noteBack(entry, 'hook'); pending.delete(id); clearTimeout(entry.timer); broadcast({ k: 'permDone', id }); } });
-  if (s && s.status !== 'wait') { s.status = 'wait'; broadcast({ k: 'sess', s: pub(s) }); }
-  broadcast({ k: 'perm', p: permPub(entry) });
-  if (forPhone) { phonePush(entry, entry.pushText); watchBack(); }
-  else if (ours || (long && prefs.get('phoneApprove'))) pushOut({ title: tr('server.push.permTitle', { name: entry.name }), body: clip(`${c.label}: ${oneLine(entry.detail)}`, 180), tag: `perm-${id}`, url: '/', urgent: true });
-  { const run = tasks.list().find(matchesRun), card = run && cards.get(run.id);
-    if (card) { card.wait = clip(`${c.label}: ${oneLine(entry.detail)}`, 120); chat.setWork(card.id, { state: 'wait', ask: card.wait, perm: id, risky: !!dangerKey(entry), steps: card.steps, n: card.n });   // (perm: its Allow / Deny buttons)
-      res.on('close', () => { if (cards.get(run.id) === card) { card.wait = null; chat.setWork(card.id, { state: 'work', ask: null, perm: null }); } }); } }
-}
+const {
+  presence, barWatch, pending, released, deniedHeld,
+  officeFocused, macApprove, barHolds, hookLimit,
+  permPub, permDecision, askDecision, planDecision,
+  settlePerm, giveBack, keepForPhone,
+  taskPermission, onPermission, onDenied, onQuestion,
+} = createApprovals({
+  prefs, push, tasks, cards, chat, sessions, bySid, scanSessions, pub, broadcast,
+  classifyVi, normalizeTool, undo, undoTools: UNDO_TOOLS, fileOf,
+  loopLabel: (name, input) => loopLabel(name, input),
+  actionLog: ACTION_LOG, tr, idleSeconds: () => idleSeconds(),
+});
 
 /* ---------- "Ghi nhớ cho Claude": what you pin for a conversation (the session drawer's "Ghi nhớ" tab), said to Claude
    again each time Claude Code compacts it, when what it was told along the way may be summed up away. The synchronous
@@ -1513,35 +1347,6 @@ async function onStart(p) {
   return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: `${tr('server.pins.context')}\n${list.map((x) => `- ${x.text}`).join('\n')}` } };
 }
 
-/* ---------- "Hộp lệnh bị chặn": a call auto mode refused (the synchronous PermissionDenied hook). A card in the chat
-   says what was refused and why. While an office page has focus, Claude Code waits up to 40 s for "Cho Claude thử
-   lại" (retry: Claude is told it may try the call again, which goes through auto mode again) or "Giữ chặn"; with none,
-   or when auto mode gave no verdict (a retry would be ignored), the refusal stands at once and the card keeps it on
-   record, the command ready to copy. Phones answer only when the Mac lets them approve. ---------- */
-const DENY_HOLD_MS = 40_000;
-const deniedHeld = new Map();   // card id -> settle(retry)
-const NO_VERDICT = /^(Auto mode could not evaluate|Classifier unavailable)/i;
-async function onDenied(p, res) {
-  let s = p?.session_id ? bySid(p.session_id) : null; if (p?.session_id && !s) { await scanSessions(); s = bySid(p.session_id); }
-  if (p?.session_id && UNDO_TOOLS.has(p.tool_name)) undo.reject(p.session_id, fileOf(p.tool_input, p.cwd || s?.cwd));
-  const reason = clip(oneLine(String(p?.reason || '')), 300), canRetry = !NO_VERDICT.test(reason), hold = !!s && canRetry && officeFocused();
-  const shell = p?.tool_name === 'Bash' || p?.tool_name === 'PowerShell';
-  const cmd = clip(redact(String(shell ? p.tool_input?.command || '' : JSON.stringify(p?.tool_input || {}))), 2000);
-  const m = s ? chat.denyCard(s.id, { sess: s.id, tool: p.tool_name || '', label: loopLabel(p.tool_name, p.tool_input), cmd, shell, reason, retry: canRetry, state: hold ? 'held' : 'kept', until: hold ? Date.now() + DENY_HOLD_MS : 0 }) : null;
-  fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} denied ${p?.session_id || '?'} ${clip(oneLine(cmd), 100)} ${reason}${hold ? ' (held)' : ''}\n`).catch(() => {});
-  if (!hold || !m) { res.writeHead(200).end(''); return; }
-  let timer = 0;
-  const settle = (retry) => {
-    if (deniedHeld.get(m.id) !== settle) return;
-    deniedHeld.delete(m.id); clearTimeout(timer);
-    chat.setDeny(m.id, { state: retry ? 'retry' : 'kept', until: 0 });
-    try { res.writeHead(200, { 'Content-Type': 'application/json' }).end(retry ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionDenied', retry: true } }) : ''); } catch { /* gone */ }
-  };
-  deniedHeld.set(m.id, settle);
-  timer = setTimeout(() => settle(false), DENY_HOLD_MS);
-  res.on('close', () => { if (deniedHeld.get(m.id) === settle) { deniedHeld.delete(m.id); clearTimeout(timer); chat.setDeny(m.id, { state: 'kept', until: 0 }); } });   // (Claude Code gave up waiting)
-}
-
 /* ---------- "Hoàn tác lượt cuối" (server/undo.mjs): the files Claude's file tools changed in a conversation's last
    turn, put back from the office's own copies (made by /hook/loop before each write). Only once the turn is over and
    the session rests; what is there now is kept in data/undo/<session>/<turn>/after. Phones may only when the Mac lets
@@ -1561,67 +1366,6 @@ async function undoAct(b, who) {
   broadcast({ k: 'sess', s: pub(s) });
   fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} undo ${s.sid} from ${who}: ${r.done.map((x) => `${x.action} ${x.file}`).join(', ')}\n`).catch(() => {});
   return [200, { ok: true, done: r.done.map((x) => ({ ...x, file: tilde(x.file) })), after: tilde(r.after || '') }];
-}
-
-/* ---------- questions and plans from Claude, answered in the office ----------
-   A synchronous PreToolUse hook (matcher AskUserQuestion|ExitPlanMode) posts here, under the same rule as approvals:
-   held only while an office page has focus, 45 s at most (away from the Mac: for the phone, see above), otherwise
-   Claude Code asks as usual. Documented answer
-   (code.claude.com/docs/en/hooks): permissionDecision "allow" with updatedInput = the original input plus `answers`
-   (question text -> chosen label, several labels joined with ", "). A plan is approved by allowing ExitPlanMode, or
-   sent back with your note by denying it. The page sends indexes; texts are taken from the original input here. */
-const ASK_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
-async function onQuestion(p, res, long = false, limit = HOLD_MS) {
-  const lh = longHold(p, long); if (lh.skip) { res.writeHead(200).end(''); return; }
-  const plan = long ? { ms: 0, by: null } : await holdNow(limit), hold = plan.ms, forPhone = plan.by === 'phone';
-  if (!p || !p.session_id || !ASK_TOOLS.has(p.tool_name) || (!hold && !long)) { res.writeHead(200).end(''); return; }
-  let s = bySid(p.session_id); if (!s) { await scanSessions(); s = bySid(p.session_id); }
-  const i = p.tool_input || {}, id = crypto.randomUUID(), now = Date.now(), txt = (v, n) => clip(redact(oneLine(v)), n);
-  const entry = { id, res, sess: s?.id || null, name: s?.name || base(p.cwd) || 'claude', tool: p.tool_name, input: i, at: now, until: long ? 0 : now + hold, long, phone: forPhone, task: lh.task?.id || null,
-    limit: Math.min(PHONE_HOLD_MS, limit) };
-  if (p.tool_name === 'AskUserQuestion') {
-    const qs = Array.isArray(i.questions) ? i.questions.slice(0, 4) : [];
-    if (!qs.length) { res.writeHead(200).end(''); return; }
-    Object.assign(entry, { kind: 'ask', type: 'ask', label: tr('server.tool.ask') });
-    entry.questions = qs.map((q) => ({ question: txt(q.question, 400), header: txt(q.header, 30), multi: !!q.multiSelect,
-      options: (Array.isArray(q.options) ? q.options.slice(0, 6) : []).map((o) => ({ label: txt(o.label, 80), description: txt(o.description, 240) })) }));
-    entry.detail = entry.questions.map((q) => q.question).join('\n');
-  } else {
-    Object.assign(entry, { kind: 'plan', type: 'plan', label: tr('server.tool.plan') });
-    entry.plan = clip(redact(String(i.plan || '')), 20000); entry.detail = clip(oneLine(entry.plan), 200);
-  }
-  entry.pushText = entry.detail;
-  if (!long) entry.timer = setTimeout(() => keepForPhone(id, 'timeout'), hold);
-  pending.set(id, entry);
-  res.on('close', () => { if (pending.get(id) === entry) { noteBack(entry, 'hook'); pending.delete(id); clearTimeout(entry.timer); broadcast({ k: 'permDone', id }); } });
-  if (s && s.status !== 'wait') { s.status = 'wait'; broadcast({ k: 'sess', s: pub(s) }); }
-  broadcast({ k: 'perm', p: permPub(entry) });
-  if (forPhone) { phonePush(entry, entry.pushText); watchBack(); }
-  // a phone's work asking (a background session): its card says so, answered where approvals are; a push if nobody looks
-  const card = lh.task && cards.get(lh.task.id);
-  if (card) {
-    card.wait = clip(`${entry.label}: ${oneLine(entry.detail)}`, 120); chat.setWork(card.id, { state: 'wait', ask: card.wait, perm: null, steps: card.steps, n: card.n });
-    res.on('close', () => { if (cards.get(lh.task.id) === card) { card.wait = null; chat.setWork(card.id, { state: 'work', ask: null, perm: null }); } });
-    if (prefs.get('phoneApprove')) pushOut({ title: tr('server.push.permTitle', { name: entry.name }), body: clip(oneLine(entry.detail), 180), tag: `perm-${id}`, url: '/', urgent: true });
-  }
-}
-// The reply for a question card: `answers` from the page is [{ q, pick: [option indexes], other }].
-function askDecision(p, b) {
-  const qs = Array.isArray(p.input.questions) ? p.input.questions : [], answers = {};
-  for (const a of Array.isArray(b.answers) ? b.answers : []) {
-    const q = qs[a?.q]; if (!q || typeof q.question !== 'string') continue;
-    const labels = (Array.isArray(a.pick) ? a.pick : []).map((k) => q.options?.[k]?.label).filter((x) => typeof x === 'string');
-    const other = oneLine(a.other).slice(0, 500);
-    const val = [...(q.multiSelect ? labels : labels.slice(0, 1)), ...(other ? [other] : [])].join(', ');
-    if (val) answers[q.question] = val;
-  }
-  if (Object.keys(answers).length < qs.length) return null;
-  return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...p.input, answers } } };
-}
-function planDecision(p, choice, note) {
-  if (choice === 'approve') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: p.input } };
-  const why = oneLine(note).slice(0, 1000);
-  return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why ? tr('server.perm.planReviseWhy', { why }) : tr('server.perm.planRevise') } };
 }
 
 /* ---------- "Ngắt vòng lặp kẹt": a session going round in circles (server/loops.mjs) ----------
