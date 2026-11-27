@@ -4,7 +4,7 @@ import { test, expect, type Page, type APIRequestContext } from '@playwright/tes
 import { HOME_DIR } from '../../playwright.config';
 
 // The prompt helper over the group chat's input, writing to Claude (src/shared/prompt-coach.js, ui/group-chat-view.js;
-// the rewrite: server/rewrite.mjs, answered by tests/e2e/fake-claude.sh, so nothing is spent): a hint once you stop
+// the rewrite: server/rewrite.mjs, answered by tests/e2e/fake-claude.mjs, so nothing is spent): a hint once you stop
 // typing, chips that edit what you wrote, a closed hint staying closed, "✨ Viết lại cho rõ" and "Hoàn tác", the switch in
 // Settings. A picture of each hint, on a computer and on a phone, goes to the test's output folder.
 

@@ -25,7 +25,7 @@ test.beforeAll(async () => {
   }
   fs.writeFileSync(path.join(DATA, 'others-usage.json'), JSON.stringify(others));
   const env: NodeJS.ProcessEnv = { ...process.env, HOME, USERPROFILE: HOME, NODE_ENV: 'production', OFFICE_PORT: String(PORT), OFFICE_DATA_DIR: DATA, OFFICE_LANG: 'en',
-    OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '0', OFFICE_MENUBAR: '0', OFFICE_AI_ACCOUNTS: '0', OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.sh') };
+    OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '0', OFFICE_MENUBAR: '0', OFFICE_AI_ACCOUNTS: '0', OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.mjs') };
   delete env.CLAUDE_CONFIG_DIR;   // (never the real ~/.claude)
   server = spawn(process.execPath, ['server/index.mjs'], { env, stdio: 'ignore' });
   await expect.poll(async () => { try { return (await fetch(`${BASE}/health`)).ok; } catch { return false; } }, { timeout: 60_000 }).toBe(true);

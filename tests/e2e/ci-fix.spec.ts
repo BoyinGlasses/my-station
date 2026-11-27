@@ -6,9 +6,9 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { test, expect, type Page } from '@playwright/test';
 
 // "Sửa luôn" (server/index.mjs ciCard / ciFix): a repository's CI goes red, a card in the group chat, and its button
-// hands Claude the failing run. GitHub is tests/e2e/fake-gh.sh (the runs each repository answers with are files this
+// hands Claude the failing run. GitHub is tests/e2e/fake-gh.mjs (the runs each repository answers with are files this
 // test writes), the sessions are stand-ins as in steer.spec.ts: one at work with an inbox socket this test listens on,
-// one resting that tests/e2e/fake-claude.sh carries on. On an office of its own (its own port, home and data).
+// one resting that tests/e2e/fake-claude.mjs carries on. On an office of its own (its own port, home and data).
 const OUT = path.resolve(process.env.E2E_OUT || 'test-results', 'ci-fix');
 const PORT = (Number(process.env.E2E_PORT) || 4399) + 34, BASE = `http://127.0.0.1:${PORT}`;
 const HOME = path.join(OUT, 'home'), RUNS = path.join(OUT, 'gh-runs');
@@ -33,8 +33,8 @@ test.beforeAll(async () => {
   repo(BUSY); repo(REST);
   inbox = net.createServer((c) => { let b = ''; c.on('data', (d) => { b += d; }); c.on('end', () => got.push(b)); });
   await new Promise<void>((r) => inbox!.listen(INBOX, r));
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME, USERPROFILE: HOME, OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.sh'), NODE_ENV: 'production', OFFICE_PORT: String(PORT),
-    OFFICE_DATA_DIR: path.join(OUT, 'office-data'), OFFICE_LANG: 'en', OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '1', GH_PATH: path.resolve('tests/e2e/fake-gh.sh'), FAKE_GH_DIR: RUNS, FAKE_INBOX: INBOX };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME, USERPROFILE: HOME, OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.mjs'), NODE_ENV: 'production', OFFICE_PORT: String(PORT),
+    OFFICE_DATA_DIR: path.join(OUT, 'office-data'), OFFICE_LANG: 'en', OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '1', GH_PATH: path.resolve('tests/e2e/fake-gh.mjs'), FAKE_GH_DIR: RUNS, FAKE_INBOX: INBOX };
   delete env.CLAUDE_CONFIG_DIR;   // (never the real ~/.claude)
   server = spawn(process.execPath, ['server/index.mjs'], { env, stdio: 'ignore' });
   await expect.poll(async () => { try { return (await fetch(`${BASE}/health`)).ok; } catch { return false; } }, { timeout: 60_000 }).toBe(true);

@@ -1,6 +1,6 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
 
-// A fixed address on your own domain (server/index.mjs setTunnelDomain, tests/e2e/fake-cloudflared.sh): from a quick
+// A fixed address on your own domain (server/index.mjs setTunnelDomain, tests/e2e/fake-cloudflared.mjs): from a quick
 // tunnel's random address to https://office.example.test (login, tunnel, DNS name, then run as that name), shown in the
 // phone window; back to a quick one when dropped.
 type T = { url: string, state: string, fixed: string, domain: { state: string } | null };

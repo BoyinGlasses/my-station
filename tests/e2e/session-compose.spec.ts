@@ -5,7 +5,7 @@ import { HOME_DIR } from '../../playwright.config';
 
 // A session's own page on a phone (src/office/ui/session-compose.js): the six tiles are one line of chips, and a box under
 // the conversation writes to the session the way the group chat's "Gửi tới" does (POST /api/tasks { sid, text, chat }),
-// with what was sent and its progress above the box and the answer in the conversation. tests/e2e/fake-claude.sh answers.
+// with what was sent and its progress above the box and the answer in the conversation. tests/e2e/fake-claude.mjs answers.
 const { defaultBrowserType: _browser, ...iphone } = devices['iPhone 14'];
 void _browser;
 test.use({ ...iphone, deviceScaleFactor: 1 });

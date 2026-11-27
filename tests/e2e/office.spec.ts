@@ -295,7 +295,7 @@ test('away from home: the tunnel switch, and all that comes through it is from t
   await page.locator('#pm-body .pm-tab', { hasText: 'out' }).click();
   const sw = page.locator('#pm-body .pm-approve', { hasText: 'Cloudflare' });
   await sw.locator('input').click();
-  await expect(page.locator('#pm-body')).toContainText('e2e-office-test.trycloudflare.com', { timeout: 20_000 });   // (tests/e2e/fake-cloudflared.sh)
+  await expect(page.locator('#pm-body')).toContainText('e2e-office-test.trycloudflare.com', { timeout: 20_000 });   // (tests/e2e/fake-cloudflared.mjs)
   await expect(page.locator('#pm-body .pm-digits')).toBeVisible();
   const t = await (await request.get('/api/tunnel')).json();
   expect(t.state).toBe('on');
@@ -409,7 +409,7 @@ test('giving Claude work from the chat: a folder or a tagged conversation, the r
   await sheet.locator('.zc-task-go').click();
   await expect(sheet).toBeHidden({ timeout: 20_000 });
   await expect(zc.locator('.zc-row.is-mine', { hasText: 'write a hello file' })).toBeVisible({ timeout: 20_000 });
-  await expect(zc).toContainText('Done: the e2e task.', { timeout: 30_000 });   // (tests/e2e/fake-claude.sh answers for `claude -p`)
+  await expect(zc).toContainText('Done: the e2e task.', { timeout: 30_000 });   // (tests/e2e/fake-claude.mjs answers for `claude -p`)
   // its card: the steps it took (the fake one reads a README), then done
   await expect(zc.locator('.zc-work.is-done').first()).toBeVisible({ timeout: 20_000 });
   await zc.locator('.zc-work.is-done .zc-readmore').first().click();
@@ -1159,7 +1159,7 @@ test('adding a Claude account: a folder of its own, connected to the office, sig
   await page.click('.plan-add-btn');
   await page.fill('.pa-form input', 'Công ty');
   await page.click('.pa-form [type=submit]');
-  // the sign-in runs by itself (tests/e2e/fake-claude.sh stands in for Claude Code): the page to open again, then done
+  // the sign-in runs by itself (tests/e2e/fake-claude.mjs stands in for Claude Code): the page to open again, then done
   await expect(page.locator('.pa-browser')).toBeVisible({ timeout: 20_000 });
   const settings = JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8'));
   expect(settings.hooks?.SessionStart?.length).toBeGreaterThan(0);   // (its sessions show in the office too)
@@ -1205,7 +1205,7 @@ test('an open conversation moves to another account: stopped while it rests, sta
   fs.mkdirSync(path.join(HOME_DIR, '.claude', 'projects'), { recursive: true });   // (the history the accounts share)
   fs.mkdirSync(path.join(HOME_DIR, '.vscode', 'extensions', 'anthropic.claude-code-e2e'), { recursive: true });   // (an editor with Claude Code's extension)
   fs.mkdirSync(sessDir, { recursive: true });
-  // a second account, signed in the way the card does it (tests/e2e/fake-claude.sh)
+  // a second account, signed in the way the card does it (tests/e2e/fake-claude.mjs)
   fs.rmSync(acctDir, { recursive: true, force: true });
   expect((await request.post('/api/accounts', { data: { name: 'phu e2e' } })).ok()).toBeTruthy();
   await expect.poll(() => fs.existsSync(path.join(acctDir, '.claude.json')), { timeout: 30_000 }).toBe(true);

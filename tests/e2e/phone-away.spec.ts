@@ -14,7 +14,7 @@ let server: ChildProcess | null = null;
 test.beforeAll(async () => {
   fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(path.join(HOME_DIR, '.claude', 'sessions'), { recursive: true });
   fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(path.join(DATA, 'prefs.json'), JSON.stringify({ phoneApprove: true }));
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: HOME_DIR, USERPROFILE: HOME_DIR, OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.sh'), NODE_ENV: 'production', OFFICE_PORT: String(PORT),
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: HOME_DIR, USERPROFILE: HOME_DIR, OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.mjs'), NODE_ENV: 'production', OFFICE_PORT: String(PORT),
     OFFICE_DATA_DIR: DATA, OFFICE_LANG: 'en', OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '0', OFFICE_MENUBAR: '0', OFFICE_IDLE_SEC: '600', OFFICE_HOLD_MS: '4000', OFFICE_PUSH_FAKE: PUSHES };
   delete env.CLAUDE_CONFIG_DIR;   // (never the real ~/.claude)
   server = spawn(process.execPath, ['server/index.mjs'], { env, stdio: 'ignore' });

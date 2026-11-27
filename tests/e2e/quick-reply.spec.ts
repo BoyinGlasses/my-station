@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test';
 
 // Quick replies (src/shared/quick-choices.js, from PR #93 by NguyenGiaHuy-Qi): Claude's newest answer in the group chat
 // ending in "A) … B) …" gets a button per choice; a tap sends that letter back to the same conversation (--resume).
-// tests/e2e/fake-claude.sh answers "pick one" with such a list.
+// tests/e2e/fake-claude.mjs answers "pick one" with such a list.
 const HOME_DIR = path.resolve(process.env.E2E_OUT || 'test-results', 'home');
 
 test('a lettered choice at the end of Claude\'s answer: one tap answers that conversation', async ({ page, request }) => {

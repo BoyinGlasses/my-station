@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { test, expect, type Page } from '@playwright/test';
 
-// Phone work as Claude Code background sessions (server/bg-sessions.mjs), with tests/e2e/fake-claude.sh standing in for
+// Phone work as Claude Code background sessions (server/bg-sessions.mjs), with tests/e2e/fake-claude.mjs standing in for
 // `claude --bg`, `claude agents --json` and `claude stop`, and for the hooks a background session fires. On an office of
 // its own (its own port, home and data, the approval window cut to 4 s): its switch is the whole office's, and another
 // file's tasks running beside it must not become background sessions.
@@ -14,7 +14,7 @@ let server: ChildProcess | null = null;
 
 test.beforeAll(async () => {
   fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(PROJ, { recursive: true });
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME, USERPROFILE: HOME, OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.sh'), NODE_ENV: 'production', OFFICE_PORT: String(PORT),
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME, USERPROFILE: HOME, OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.mjs'), NODE_ENV: 'production', OFFICE_PORT: String(PORT),
     OFFICE_DATA_DIR: path.join(OUT, 'office-data'), OFFICE_LANG: 'en', OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '0', OFFICE_HOLD_MS: '4000' };
   delete env.CLAUDE_CONFIG_DIR;   // (never the real ~/.claude)
   server = spawn(process.execPath, ['server/index.mjs'], { env, stdio: 'ignore' });

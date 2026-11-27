@@ -71,7 +71,7 @@ test('started again on another build: five minutes, the technician packs up, the
   const build = fs.readFileSync(path.resolve(process.env.OFFICE_DIST_DIR || '.next', 'BUILD_ID'), 'utf8').trim();
   fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(DATA, { recursive: true }); fs.mkdirSync(HOME, { recursive: true });
   fs.writeFileSync(path.join(DATA, 'lift.json'), JSON.stringify({ build: 'an-older-build', sticker: null }));   // (what the last start left)
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME, USERPROFILE: HOME, OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.sh'), NODE_ENV: 'production', OFFICE_PORT: String(PORT),
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME, USERPROFILE: HOME, OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.mjs'), NODE_ENV: 'production', OFFICE_PORT: String(PORT),
     OFFICE_DATA_DIR: DATA, OFFICE_LANG: 'vi', OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '0' };
   delete env.CLAUDE_CONFIG_DIR;   // (never the real ~/.claude)
   const start = async () => {

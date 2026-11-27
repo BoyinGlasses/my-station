@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { test, expect, type Page } from '@playwright/test';
 
 // "Chen lời giữa chừng" (server/steer.mjs): a note into a conversation while it works, through its inbox socket. The
-// sessions here are stand-ins (a session file and hook events, tests/e2e/fake-claude.sh for the runs the office starts),
+// sessions here are stand-ins (a session file and hook events, tests/e2e/fake-claude.mjs for the runs the office starts),
 // and their inbox is a socket this test listens on: what reaches it is what a real session would read. On an office of
 // its own (its own port, home and data).
 const OUT = path.resolve(process.env.E2E_OUT || 'test-results', 'steer');
@@ -21,7 +21,7 @@ test.beforeAll(async () => {
   fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(path.join(HOME, '.claude', 'sessions'), { recursive: true }); fs.mkdirSync(PROJ, { recursive: true });
   inbox = net.createServer((c) => { let b = ''; c.on('data', (d) => { b += d; }); c.on('end', () => got.push(b)); });
   await new Promise<void>((r) => inbox!.listen(INBOX, r));
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME, USERPROFILE: HOME, OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.sh'), NODE_ENV: 'production', OFFICE_PORT: String(PORT),
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME, USERPROFILE: HOME, OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.mjs'), NODE_ENV: 'production', OFFICE_PORT: String(PORT),
     OFFICE_DATA_DIR: path.join(OUT, 'office-data'), OFFICE_LANG: 'en', OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '0', FAKE_INBOX: INBOX };
   delete env.CLAUDE_CONFIG_DIR;   // (never the real ~/.claude)
   server = spawn(process.execPath, ['server/index.mjs'], { env, stdio: 'ignore' });

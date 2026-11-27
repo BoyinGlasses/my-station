@@ -27,7 +27,7 @@ test.beforeAll(async () => {
   fs.writeFileSync(path.join(FAKE, 'ana@example.com.json'), JSON.stringify({ primary: 42, secondary: 12 }));
   if (sqlite) { sql('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB);'); signIn('xuan'); }
   const env: NodeJS.ProcessEnv = { ...process.env, HOME, USERPROFILE: HOME, NODE_ENV: 'production', OFFICE_PORT: String(PORT), OFFICE_DATA_DIR: path.join(OUT, 'office-data'), OFFICE_LANG: 'en',
-    OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '0', OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.sh'),
+    OFFICE_TRANSLATE: '0', OFFICE_USAGE: '0', OFFICE_CI: '0', OFFICE_CLAUDE_BIN: path.resolve('tests/e2e/fake-claude.mjs'),
     OFFICE_CODEX_BIN: path.resolve('tests/e2e/fake-codex.mjs'), FAKE_CODEX_DIR: FAKE, OFFICE_CODEX_PROCS: '0', OFFICE_OPEN_URL: '0',
     OFFICE_AG_DB: DB, OFFICE_AG_APP: 'Fake IDE E2E', OFFICE_AG_RESTART: '0' };
   delete env.CLAUDE_CONFIG_DIR; delete env.CODEX_HOME;   // (never the real ~/.claude or ~/.codex)
