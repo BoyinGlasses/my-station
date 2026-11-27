@@ -1072,11 +1072,10 @@ setInterval(async () => {
 
 /* ---------- hook events ---------- */
 function pushFeed(e) { feed.push(e); if (feed.length > FEED_MAX) feed = feed.slice(-FEED_MAX); dirty = true; }
-function count(s, tool, sub) {
+function count(s, tool) {
   const k = COUNT_OF[tool];
   if (!k) return;
   s.counts[k]++; stats[k]++; dirty = true; trophies.bump(k);
-  void sub;
 }
 
 let lastHookAt = 0;
@@ -2349,7 +2348,6 @@ async function prepareAccount(name) {
   watchLogins();
   return { ok: true, name: slug, dir: `~/.claude-${slug}`, loggedIn: done, login: L && { state: L.state, url: L.url || '', note: L.note || '' }, win: process.platform === 'win32', ...accountCmd(slug) };
 }
-setInterval(scanAccounts, 60_000).unref();
 let accountMtime = 0;
 setInterval(() => {   // /login to another account rewrites ~/.claude.json: notice within 15 s
   fs.stat(ACCOUNT_FILE, (err, st) => {
