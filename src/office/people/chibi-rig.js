@@ -410,12 +410,6 @@ export function makeChibi(cfg = {}, scale = 1) {
     add(g, new THREE.TorusGeometry(0.035, 0.008, 5, 10, Math.PI), plainMat('#1C1E22'), 0, 0.005, 0);
     g.traverse((o) => { o.castShadow = false; });
   }
-  {   // a phone held up to film (people/pickle.js): the screen lit
-    const g = hold('phone');
-    add(g, new THREE.BoxGeometry(0.065, 0.12, 0.009), plainMat('#1E2125', { roughness: 0.4 }), 0, 0.06, 0);
-    add(g, new THREE.PlaneGeometry(0.056, 0.106), new THREE.MeshBasicMaterial({ color: '#9ED8FF' }), 0, 0.06, -0.005).rotation.y = Math.PI;
-    g.traverse((o) => { o.castShadow = false; });
-  }
   {   // a commit on its way to the lobby's post box (life/post.js): a white envelope, a red and blue airmail edge
     const g = hold('letter');
     add(g, new THREE.BoxGeometry(0.12, 0.08, 0.006), plainMat('#FBFAF5', { roughness: 0.8 }), 0, 0.03, 0);
