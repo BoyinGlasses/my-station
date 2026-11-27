@@ -541,14 +541,24 @@ export function buildShops(G, fronts) {
   };
   innerM.customProgramCacheKey = () => 'shop-inner';
   const glassM = new THREE.MeshStandardMaterial({ color: '#BFD9E6', transparent: true, opacity: 0.16, roughness: 0.05, metalness: 0.1, depthWrite: false, side: THREE.DoubleSide });
-  const frameM = vmat({ roughness: 0.5, metalness: 0.3 }), shutterM = vmat({ roughness: 0.6, metalness: 0.35 });
+  const frameM = vmat({ roughness: 0.5, metalness: 0.3 }), shutterM = vmat({ roughness: 0.6, metalness: 0.35 }), outM = vmat({ roughness: 0.6 });
   const poolM = new THREE.MeshBasicMaterial({ map: poolTexture(), vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: true });
+  const sharedMats = new Set([faceM, innerM, glassM, frameM, shutterM, outM, poolM]);
   const tag = (geo, n) => { geo.setAttribute('aShop', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count).fill(n), 1)); return geo; };
   let poolMesh = null, doorGlass = null, doorFrame = null;
 
   /* (re)build everything for the city picked now */
   function build() {
-    if (built) { built.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.isCSS2DObject) o.element.remove(); }); G.remove(built); }
+    if (built) {
+      const seenMat = new Set();
+      built.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.isInstancedMesh) o.dispose();
+        if (o.material) for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m && !sharedMats.has(m) && !seenMat.has(m)) { seenMat.add(m); m.dispose(); }
+        if (o.isCSS2DObject) o.element.remove();
+      });
+      G.remove(built);
+    }
     built = new THREE.Group(); G.add(built);
     const out = [], inner = [], glass = [], faces = [], pools = [], leafs = [];
     stores = [];
@@ -642,7 +652,7 @@ export function buildShops(G, fronts) {
       pool(S, M);
     });
     const mesh = (list, mat, shadow, recv = true) => { if (!list.length) return null; const o = new THREE.Mesh(mergeAll(list), mat); o.castShadow = shadow; o.receiveShadow = recv; built.add(o); return o; };
-    mesh(out, vmat({ roughness: 0.6 }), true);
+    mesh(out, outM, true);
     for (const list of inner) mesh(list, innerM, false, false);
     mesh(faces, faceM, false);
     const gl = mesh(glass, glassM, false, false); if (gl) gl.renderOrder = 2;
@@ -930,8 +940,9 @@ function propSet(G, n) {
     scooter: parkedScooter('#D96A8A'),
   };
   const meshes = {}, kindOf = [], Z0 = new THREE.Matrix4().makeScale(0, 0, 0), M = new THREE.Matrix4(), Q = new THREE.Quaternion(), P = new THREE.Vector3(), ONE = new THREE.Vector3(1, 1, 1), UP = new THREE.Vector3(0, 1, 0);
+  const propMat = vmat({ roughness: 0.6 }), screenMat = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
   for (const [k, geo] of Object.entries(kinds)) {
-    const o = new THREE.InstancedMesh(geo, k === 'screen' ? new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }) : vmat({ roughness: 0.6 }), n);
+    const o = new THREE.InstancedMesh(geo, k === 'screen' ? screenMat : propMat, n);
     o.frustumCulled = false; o.count = 0; o.visible = false;
     for (let i = 0; i < n; i++) o.setMatrixAt(i, Z0);
     G.add(o); meshes[k] = o;
