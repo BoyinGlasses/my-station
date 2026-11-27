@@ -354,7 +354,7 @@ export function makeChibi(cfg = {}, scale = 1) {
   cup.visible = false; P.cup = cup; P.cupBand = band;
   // the stores' own takeaways (outings.js picks one by the chain), held like the drink: Circle K's mì ly (the lid peeled
   // back, chopsticks in, steaming), GS25's tokbokki (red rice cakes, a fish-cake skewer), 7-Eleven's onigiri and bánh
-  // bao, Ministop's soft-serve and fried chicken
+  // bao, Mixue's soft-serve cone
   P.held = { cup };
   const hold = (k) => { const g = new THREE.Group(); g.position.set(0, -0.02, D.handR * 0.9); g.visible = false; P.armR.hand.add(g); P.held[k] = g; return g; };
   const stick = plainMat('#D9B98A', { roughness: 0.8 }), paper = plainMat('#FBF8F1', { roughness: 0.75 });
@@ -394,13 +394,6 @@ export function makeChibi(cfg = {}, scale = 1) {
     add(g, new THREE.ConeGeometry(0.034, 0.11, 10).rotateX(Math.PI), plainMat('#D49A55', { roughness: 0.8 }), 0, -0.02, 0);
     add(g, new THREE.SphereGeometry(0.038, 10, 8), cream, 0, 0.045, 0, 1, 0.8, 1);
     add(g, new THREE.ConeGeometry(0.03, 0.05, 10), cream, 0, 0.088, 0);
-  }
-  {
-    const g = hold('chicken');
-    add(g, new THREE.BoxGeometry(0.08, 0.09, 0.05), paper, 0, 0, 0);
-    add(g, new THREE.BoxGeometry(0.081, 0.024, 0.051), plainMat('#003894', { roughness: 0.8 }), 0, 0.022, 0);
-    add(g, new THREE.CapsuleGeometry(0.022, 0.03, 4, 8), plainMat('#B8702E', { roughness: 0.6 }), 0.008, 0.07, 0).rotation.z = 0.3;
-    add(g, new THREE.CylinderGeometry(0.006, 0.006, 0.03, 5), plainMat('#F4EEE2'), -0.006, 0.112, 0).rotation.z = 0.3;
   }
   {   // a pickleball paddle (people/pickle.js), held up in front: the grip, the face edged in black
     const g = hold('paddle'), face = plainMat(['#F2C230', '#2E86DE', '#D8323C', '#7A4FD8'][seed % 4], { roughness: 0.45 }), edge = plainMat('#1E2125', { roughness: 0.5 });

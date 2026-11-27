@@ -2,10 +2,9 @@
 // for the weather. The convenience stores are real rooms cut into their building's ground floor that you can walk into:
 // a glass front with an automatic door, two aisles, drinks fridges along the back, the till, and each chain's own corner
 // (Circle K's sausage grill and cup noodles, GS25's tokbokki tray, fish cakes and ramyeon machines, 7-Eleven's bánh bao
-// steamer and onigiri chiller, Ministop's fried chicken and soft-serve, WinMart+'s and Bách Hóa Xanh's vegetables and
-// meat), staff in the chain's colour, and who each one draws at its hours: students with laptops at Circle K's window
-// counter at night, Gen Z over tokbokki at GS25, office lunch at 7-Eleven with a courier waiting outside, a child with an
-// ice cream at Ministop, an auntie with her shopping at WinMart+ after work. Real opening hours: the 24-hour chains stay
+// steamer and onigiri chiller, WinMart+'s and Bách Hóa Xanh's vegetables and meat), staff in the chain's colour, and
+// who each one draws at its hours: students with laptops at Circle K's window counter at night, Gen Z over tokbokki at
+// GS25, office lunch at 7-Eleven with a courier waiting outside, an auntie with her shopping at WinMart+ after work. Real opening hours: the 24-hour chains stay
 // lit all night, WinMart+ and Bách Hóa Xanh roll their shutters down at closing time. The signs carry the chains' real
 // logos (public/assets/brands, from Wikimedia Commons: see the README there); the town's own eateries are painted fronts.
 // The cafés, the phone shop and the pharmacy are whole modules of their own (shop-*.js: Highlands, Katinat, Phúc Long,
@@ -87,8 +86,6 @@ const CHAINS = {
     fridge: { id: 'bananaMilk', price: 28, carry: 'cup' }, side: { id: 'ramyeon', price: 29, carry: 'noodle', unit: 'ramyeon' }, hot: { id: 'tok', price: 35, carry: 'tok', unit: 'tok' } },
   seven: { name: '7-Eleven', logo: '7-eleven.svg', stripes: ['#F58220', '#008163', '#EE2526'], accent: '#008163', shirt: '#0E7A5C', hours: null, seats: true,
     fridge: { id: 'coffee', price: 20, carry: 'cup' }, side: { id: 'onigiri', price: 17, carry: 'onigiri', unit: 'chiller' }, hot: { id: 'bun', price: 19, carry: 'bun', unit: 'steamer' } },
-  ministop: { name: 'Ministop', logo: 'ministop.svg', stripes: ['#003894', '#FFD200', '#E60012'], accent: '#003894', shirt: '#1E3F8F', hours: null, seats: true,
-    fridge: { id: 'water', price: 8, carry: 'cup' }, side: { id: 'cone', price: 10, carry: 'cone', unit: 'softserve' }, hot: { id: 'chicken', price: 25, carry: 'chicken', unit: 'fryer' } },
   winmart: { name: 'WinMart+', logo: 'winmart.png', crop: [0.92, 0.7], plus: true, stripes: ['#E21B2A'], accent: '#E21B2A', shirt: '#D21F2C', hours: [6, 22], seats: false,
     fridge: { id: 'milk', price: 32, carry: 'grocery' }, side: { id: 'veg', price: 12, carry: 'grocery', unit: 'produce' }, hot: null },
   // (an ice cream and tea shop, not a store: its own printing, fittings and people, shop-mixue.js)
@@ -105,7 +102,6 @@ const PROMO = {
   circlek: [['MÌ LY', '+ TRÀ ĐÀO', '25K', '#E21F26'], ['XÚC XÍCH', 'NƯỚNG', '15K', '#F39C1F']],
   gs25: [['TOKBOKKI', 'CHẢ CÁ', '35K', '#C8261B'], ['MÌ HÀN', 'NẤU MÁY', '29K', '#0068B7']],
   seven: [['ONIGIRI', 'CƠM NẮM', '17K', '#008163'], ['BÁNH BAO', 'NÓNG HỔI', '19K', '#F58220']],
-  ministop: [['KEM TƯƠI', 'ỐC QUẾ', '10K', '#003894'], ['GÀ RÁN', 'GIÒN TAN', '25K', '#E60012']],
   winmart: [['GIÁ TỐT', 'MỖI NGÀY', '-20%', '#E21B2A'], ['RAU CỦ', 'TƯƠI MỚI', '9K', '#2E9E4A']],
   bhx: [['RAU TƯƠI', 'MỖI NGÀY', '9K', '#008C44'], ['THỊT CÁ', 'TƯƠI SỐNG', '-15%', '#E8A100']],
 };
@@ -113,7 +109,6 @@ const MENU = {
   circlek: ['MÓN NÓNG', [['Mì ly', '12K'], ['Xúc xích nướng', '15K'], ['Bánh bao', '15K'], ['Trà đào', '20K']]],
   gs25: ['MÓN HÀN', [['Tokbokki chả cá', '35K'], ['Chả cá xiên', '12K'], ['Mì Hàn nấu máy', '29K'], ['Kimbap', '25K']]],
   seven: ['MÓN NGON', [['Cơm hộp', '35K'], ['Onigiri', '17K'], ['Bánh bao', '19K'], ['Cà phê', '20K']]],
-  ministop: ['MÓN NÓNG', [['Gà rán', '25K'], ['Khoai tây chiên', '15K'], ['Kem tươi', '10K'], ['Xúc xích', '15K']]],
   winmart: ['GIÁ HÔM NAY', [['Trứng gà (10)', '32K'], ['Sữa tươi 1L', '32K'], ['Rau muống', '12K'], ['Gạo 5kg', '120K']]],
   bhx: ['GIÁ HÔM NAY', [['Thịt heo (kg)', '135K'], ['Cá basa (kg)', '70K'], ['Rau cải', '10K'], ['Trứng gà (10)', '30K']]],
 };
@@ -437,9 +432,6 @@ function fitOut(key, D, r, low) {
     for (let s = 0; s < 2; s++) for (let k = 0; k < 6; k++) ball(0.055, 1.45 + (k % 3) * 0.17, 1.06 + s * 0.18, -1.7 + Math.floor(k / 3) * 0.14, '#FAF6EC', 0.75);
     b(0.3, 0.5, 0.3, 2.6, 1.23, -2.95, '#2B2F36'); b(0.12, 0.03, 0.12, 2.6, 1.03, -2.88, '#9AA2AD');
     steam.push([1.62, 1.5, -1.62]);
-  } else if (hot === 'fryer') {   // fried chicken under a warm lamp, on the till
-    vitrine(0.55, 0.36, 0.38, 1.62, 0.98, -1.62, '#FFC46B'); b(0.5, 0.01, 0.34, 1.62, 1.0, -1.62, '#D9A441');   // (under a warm lamp)
-    for (let k = 0; k < 8; k++) ball(0.05, 1.44 + (k % 4) * 0.12, 1.04, -1.7 + Math.floor(k / 4) * 0.14, '#C8862E', 0.8);
   }
   const sz0 = -1.35, sz1 = Math.max(sz0 - 2.4, -D + 1.55), sm = (sz0 + sz1) / 2, sl = sz0 - sz1, unit = ch.side.unit;   // along the left wall, beside the first aisle
   if (unit === 'noodles') {   // a wall of cup noodles and the hot water dispenser
@@ -457,11 +449,6 @@ function fitOut(key, D, r, low) {
     for (let z = sz1 + 0.12; z < sz0 - 0.12; z += 0.2) b(0.16, 0.05, 0.16, -3.1, 0.9, z, r() < 0.5 ? '#F7C600' : '#E8742A');
     b(0.5, 0.9, sl, -3.05, 1.75, sm, '#C3C9D0');
     for (let y = 1.4; y < 2.1; y += 0.24) for (let z = sz1 + 0.06; z < sz0 - 0.06; z += 0.12 * thin) b(0.08, 0.16, 0.09, -2.84, y, z, PACKS[Math.floor(r() * 12)]);
-  } else if (unit === 'softserve') {   // the soft-serve machine and a stack of cones; snacks along the wall
-    b(0.55, 0.9, sl, -3.0, 0.45, sm, '#3A3F47'); b(0.58, 0.04, sl, -3.0, 0.92, sm, '#E8E6E1');
-    b(0.42, 0.62, 0.4, -3.02, 1.25, sz0 - 0.4, '#F2F2F2'); b(0.06, 0.08, 0.06, -2.82, 1.0, sz0 - 0.4, '#9AA2AD');
-    for (let k = 0; k < 4; k++) inner.push(colorize(new THREE.ConeGeometry(0.035, 0.12, 8).rotateX(Math.PI).translate(-2.88, FL + 1.0 + k * 0.03, sz0 - 0.85), '#D9A441'));
-    for (let y = 1.3; y < 2.1; y += 0.25) for (let z = sz1 + 0.08; z < sz0 - 1.0; z += 0.14 * thin) b(0.08, 0.18, 0.11, -3.2, y, z, PACKS[Math.floor(r() * 12)]);
   } else {   // crates of vegetables; at Bách Hóa Xanh an open case of meat and fish over them
     b(0.62, 0.6, sl, -3.0, 0.3, sm, '#7A5A3A');
     for (let z = sz1 + 0.12; z < sz0 - 0.1; z += 0.24) for (let k = 0; k < 4; k++) b(0.12, 0.08, 0.1, -3.18 + k * 0.12, 0.65, z + (k % 2) * 0.05, unit === 'meat' ? (k % 2 ? '#E7A39A' : '#F2F0EA') : GREENS[(k + Math.round(z * 10)) & 3]);
@@ -691,7 +678,6 @@ export function buildShops(G, fronts) {
     circlek: [[[6.5, 8], 1, 'office', 'cup'], [[11, 13.5], 2, 'school', 'noodle'], [[16.5, 18.5], 3, 'school', 'noodle'], [[19, 25], 3, 'student', 'laptop']],
     gs25: [[[10.5, 13.5], 1, 'genz', 'tok'], [[15, 23.5], 3, 'genz', 'tok']],
     seven: [[[7, 8.5], 1, 'office', 'cup'], [[11, 13.5], 3, 'office', 'bento'], [[19, 22.5], 1, 'student', 'cup']],
-    ministop: [[[14, 21], 2, 'genz', 'chicken']],
   };
   const pick = (r, a) => a[Math.floor(r() * a.length)];
   const LOOK = {
@@ -700,7 +686,7 @@ export function buildShops(G, fronts) {
     genz: (r) => ({ shirt: pick(r, ['#F2F2F2', '#E8B4C8', '#1E1E1E', '#B8D8F0', '#F7D774']), pants: pick(r, ['#2B2F36', '#C9B79C', '#4A5A7A']) }),
   };
   // the two outside, by chain
-  const OUT = { gs25: [LOOK.genz, LOOK.genz], seven: [() => ({ shirt: '#00A651', pants: '#2B2F36' })], ministop: [() => ({ shirt: '#E8B4C8', pants: '#4A5A7A' }), () => ({ shirt: '#F7D774', pants: '#3F7CC4' })],
+  const OUT = { gs25: [LOOK.genz, LOOK.genz], seven: [() => ({ shirt: '#00A651', pants: '#2B2F36' })],
     winmart: [() => ({ shirt: '#B85C7A', pants: '#3A3F47', sleeves: '#F2E6D8' })], bhx: [() => ({ shirt: '#8C6A9E', pants: '#3A3F47' }), () => ({ shirt: '#5E8C6A', pants: '#2B2F36' })] };
   const V3 = new THREE.Vector3();
   function buildPeople() {
@@ -762,10 +748,6 @@ export function buildShops(G, fronts) {
           } else if (S.key === 'seven' && h >= 9 && h < 22 && (t % 240) < 150) {   // a food courier on his scooter at the kerb, waiting for an order
             show(out[0], { x: -2.25, z: 1.0, sit: 0.92, yaw: 0, lean: 0.15, arms: [[1.3, -0.2], [1.4, -0.2]], hat: true });
             lay('courier', -2.0, 0, 1.0);
-          } else if (S.key === 'ministop' && dry && h >= 14 && h < 20) {   // a mother and her child with a soft-serve by the door
-            show(out[0], { x: -1.6, z: 0.65, yaw: -0.6, arms: [[0.2, 0], [0.5, -0.1]] });
-            show(out[1], { x: -1.15, z: 0.85, s: 0.62, yaw: Math.PI - 0.5, arms: [[0.2, 0], (t % 4) < 1.6 ? [2.3, -0.3] : [1.4, -0.2]] });
-            if (out[1] != null) hand(out[1], 'cone');
           } else if (S.key === 'winmart' && dry && h >= 17 && h < 19.3) {   // an auntie after work hangs her shopping on her scooter
             show(out[0], { x: -2.75, z: 0.62, yaw: 0, arms: [[0.3, 0], [1.1 + Math.sin(t * 1.5) * 0.2, -0.1]], hat: 'non' });
             lay('scooter', -2.0, 0, 1.0); lay('bag', -1.42, 0.98, 1.0);
@@ -913,7 +895,7 @@ export function buildShops(G, fronts) {
 }
 
 /* the small things people have in front of them or in hand, instanced: a laptop and its lit screen, a paper cup, a
-   tokbokki cup, a cup of noodles, a bento box, a box of fried chicken, a cone, a carrier bag, a scooter, a courier's */
+   tokbokki cup, a cup of noodles, a bento box, a cone, a carrier bag, a scooter, a courier's */
 function propSet(G, n) {
   const kinds = {
     laptop: mergeAll([boxAt(0.32, 0.015, 0.22, 0, 0.008, 0, '#3A3F47'), boxAt(0.32, 0.2, 0.012, 0, 0.11, -0.11, '#2B2F36')]),
@@ -922,7 +904,6 @@ function propSet(G, n) {
     tok: mergeAll([colorize(new THREE.CylinderGeometry(0.055, 0.04, 0.09, 10).translate(0, 0.045, 0), '#D62F2F'), boxAt(0.006, 0.16, 0.006, 0.02, 0.1, 0, '#D8C49A')]),
     noodle: mergeAll([colorize(new THREE.CylinderGeometry(0.055, 0.042, 0.1, 10).translate(0, 0.05, 0), '#F2F2F2'), colorize(new THREE.CylinderGeometry(0.056, 0.056, 0.012, 10).translate(0, 0.1, 0), '#E8742A')]),
     bento: mergeAll([boxAt(0.2, 0.05, 0.14, 0, 0.025, 0, '#1E1E1E'), boxAt(0.2, 0.01, 0.14, 0, 0.055, 0, '#E8E8E8')]),
-    chicken: boxAt(0.14, 0.1, 0.1, 0, 0.05, 0, '#E60012'),
     hlcup: mergeAll([colorize(new THREE.CylinderGeometry(0.04, 0.032, 0.12, 10).translate(0, 0.06, 0), '#F2F2F0'), colorize(new THREE.CylinderGeometry(0.042, 0.038, 0.035, 10).translate(0, 0.065, 0), '#9B1C21'), colorize(new THREE.SphereGeometry(0.04, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 0.12, 0), '#F6F1E7')]),
     phone: mergeAll([boxAt(0.07, 0.14, 0.01, 0, 0.07, 0, '#1E1E1E'), colorize(new THREE.PlaneGeometry(0.06, 0.125).translate(0, 0.07, 0.0055), '#6E8FE8')]),
     mxcup: mergeAll([colorize(new THREE.CylinderGeometry(0.042, 0.033, 0.13, 10).translate(0, 0.065, 0), '#C9A27A'), colorize(new THREE.CylinderGeometry(0.044, 0.04, 0.04, 10).translate(0, 0.07, 0), '#E50914'), boxAt(0.008, 0.08, 0.008, 0.012, 0.16, 0, '#F2F2F2')]),
