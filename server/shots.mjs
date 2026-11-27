@@ -16,12 +16,17 @@ export function shotsIn(text) {
   const urls = [...String(text || '').matchAll(LINE)].map((m) => local(m[1])).filter(Boolean);
   return { text: String(text || '').replace(LINE, '').replace(/\n{3,}/g, '\n\n').trim(), urls: [...new Set(urls)].slice(0, 3) };
 }
-const CHROME = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'];
+const WIN_CHROME = process.platform === 'win32'
+  ? [process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA]
+    .filter(Boolean)
+    .flatMap((root) => [path.join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'), path.join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe')])
+  : [];
+const CHROME = [...WIN_CHROME, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'];
 // (never the Mac's keychain: without these, a Chrome started away from your own home folder, as in the tests, asks
 // macOS for one and a "Keychain Not Found" window comes up)
 const QUIET = ['--use-mock-keychain', '--password-store=basic', '--no-first-run', '--no-default-browser-check'];
-const run = (file, args, ms) => new Promise((ok) => execFile(file, args, { timeout: ms }, (err) => ok(!err)));
-/** A page at a phone's size, as a JPEG data URL (under the chat's 500 kB), or null. */
+const run = (file, args, ms) => new Promise((ok) => execFile(file, args, { timeout: ms, windowsHide: true }, (err) => ok(!err)));
+/** A page at a phone's size, as a JPEG (or PNG fallback) data URL (under the chat's 500 kB), or null. */
 export async function shoot(url, { width = 390, height = 844 } = {}) {
   if (!local(url)) return null;
   const jpeg = (buf) => `data:image/jpeg;base64,${buf.toString('base64')}`;
@@ -43,6 +48,7 @@ export async function shoot(url, { width = 390, height = 844 } = {}) {
     if (process.platform === 'darwin' && await run('/usr/bin/sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '55', png, '--out', jpg], 20_000) && fs.existsSync(jpg)) {
       const buf = fs.readFileSync(jpg); return buf.length * 1.37 < 480_000 ? jpeg(buf) : null;
     }
-    return null;
+    const raw = fs.readFileSync(png);
+    return raw.length * 1.37 < 480_000 ? `data:image/png;base64,${raw.toString('base64')}` : null;
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
