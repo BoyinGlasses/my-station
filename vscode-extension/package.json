@@ -1,8 +1,8 @@
 {
   "name": "my-office-panel",
   "displayName": "My Office",
-  "description": "My Office in the side bar: your Claude Code sessions, what waits for your approval, your plans' limits.",
-  "version": "0.1.0",
+  "description": "My Office in the side bar: your coding agent sessions, what waits for your approval, and your plans' limits.",
+  "version": "0.6.0",
   "publisher": "my-office",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/BoyinGlasses/my-station.git" },
