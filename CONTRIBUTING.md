@@ -8,8 +8,8 @@ Requirements: Node.js 20.9 or newer, npm, and a browser with WebGL, on macOS, Li
 readings live in `server/platform/` (one module per system, same functions); CI runs `npm run smoke` on all three.
 
 ```bash
-git clone <your fork>
-cd my-office
+git clone https://github.com/BoyinGlasses/my-station.git
+cd my-station
 npm install
 npm run dev          # http://localhost:4310 with Turbopack and hot reload
 ```

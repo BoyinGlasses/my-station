@@ -16,8 +16,7 @@ không đồng nghĩa mọi đề xuất thiết kế đã được duyệt đ�
   thực sự chỉ hỗ trợ Claude, một số tên nằm trong dữ liệu đã lưu.
 - Giữ mỗi CLI tự quản lý credential/provider. Không gom khóa API của các
   CLI vào office và không suy đoán quota/chi phí của provider khác.
-- Đọc `AGENTS.md` nếu có và `C:\Users\habayakka\.codex\RTK.md`; các lệnh
-  shell dùng tiền tố `rtk`. Chỉ dùng CodeGraph nếu repo có `.codegraph/`.
+- Đọc `AGENTS.md` nếu có; tuân thủ hướng dẫn môi trường cục bộ. Chỉ dùng CodeGraph nếu repo có `.codegraph/`.
 - Không tự triển khai các việc trong file này khi nhiệm vụ chỉ là review
   hoặc chuẩn bị tài liệu. Chọn nhóm việc cụ thể cho đợt triển khai tiếp.
 
