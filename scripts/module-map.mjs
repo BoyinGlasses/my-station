@@ -15,18 +15,20 @@ const HEAD = '### Module map';
 const files = fs.readdirSync(SRC, { recursive: true }).filter((f) => f.endsWith('.js') && f !== 'main.js').sort();
 const what = (text) => {
   const lines = [];
-  for (const l of text.split('\n')) { if (!l.startsWith('//')) break; lines.push(l.replace(/^\/\/\s?/, '')); }
+  for (const l of text.replace(/\r\n/g, '\n').split('\n')) { if (!l.startsWith('//')) break; lines.push(l.replace(/^\/\/\s?/, '')); }
   const first = lines.join(' ').trim();
   const end = first.search(/\.(\s|$)/);
   return (end > 0 ? first.slice(0, end + 1) : first).replace(/\|/g, '\\|') || '…';
 };
 const rows = files.map((f) => {
-  const text = fs.readFileSync(path.join(SRC, f), 'utf8');
+  const text = fs.readFileSync(path.join(SRC, f), 'utf8').replace(/\r\n/g, '\n');
   return `| \`${f.split(path.sep).join('/')}\` | ${text.split('\n').length - (text.endsWith('\n') ? 1 : 0)} | ${what(text)} |`;
 });
+const docRaw = fs.readFileSync(DOC, 'utf8'), eol = docRaw.includes('\r\n') ? '\r\n' : '\n';
+const doc = docRaw.replace(/\r\n/g, '\n');
 const table = ['| Module | Lines | What it is |', '| --- | ---: | --- |', ...rows].join('\n');
 
-const doc = fs.readFileSync(DOC, 'utf8'), at = doc.indexOf(HEAD);
+const at = doc.indexOf(HEAD);
 if (at < 0) { console.error(`No "${HEAD}" heading in ${DOC}`); process.exit(1); }
 const start = doc.indexOf('| Module |', at), end = (() => { const m = /\n(?!\|)/g; m.lastIndex = start; const r = m.exec(doc); return r ? r.index : doc.length; })();
 const next = doc.slice(0, start) + table + doc.slice(end);
@@ -34,6 +36,6 @@ if (process.argv.includes('--check')) {
   if (next !== doc) { console.error('docs/ARCHITECTURE.md module map is out of date: run node scripts/module-map.mjs'); process.exit(1); }
   console.log('Module map is up to date.');
 } else {
-  fs.writeFileSync(DOC, next);
+  fs.writeFileSync(DOC, eol === '\r\n' ? next.replace(/\n/g, '\r\n') : next);
   console.log(`Module map: ${rows.length} modules.`);
 }
