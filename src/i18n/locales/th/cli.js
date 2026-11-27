@@ -76,5 +76,6 @@ export default {
     show: 'PIN: {pin}',
   },
   status: { context: 'context {pct}', fiveHour: '5ชม. {pct}', week: '7วัน {pct}' },
+  usage: 'วิธีใช้: my-office [start [--lan] | install [--service] [--lan] [--no-approve] [--no-status] [--no-otel] [--no-otel-names] [--no-panel] [--no-menubar] | uninstall | doctor | pin [--new]] [--settings <path>]',
   error: 'ข้อผิดพลาด: {message}',
 };

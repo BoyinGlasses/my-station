@@ -1,5 +1,5 @@
 // ข้อความที่เซิร์ฟเวอร์เขียน ข้อความที่ส่งกลับไปให้ Claude อ่าน (loop.deny, overlap, pins.context, undo.tell,
-// models.splitNote, ci.fix, steer.note, perm.*, move.resumePrompt) ตั้งใจเว้นไว้ ให้ใช้ภาษาอังกฤษตามต้นฉบับ
+// models.splitNote, ci.fix, steer.note, perm.*, move.resumePrompt) คงเป็นภาษาอังกฤษเพื่อให้ Claude อ่านตรงต้นฉบับ
 export default {
   tunnel: {
     noPlatform: 'ยังไม่มี cloudflared สำหรับระบบนี้',
@@ -18,6 +18,7 @@ export default {
     newBody: 'Cloudflare ดึงที่อยู่เก่าคืน ที่อยู่ใหม่: {url}',
   },
   move: {
+    resumePrompt: 'Carry on with the work in progress (the last turn was cut off because the previous account ran out).',
     notOpen: 'session นี้ไม่ได้เปิดอยู่แล้ว',
     noAccount: 'หาบัญชีนั้นไม่เจอ',
     same: 'session นี้อยู่บน {to} อยู่แล้ว',
@@ -39,6 +40,7 @@ export default {
   models: {
     unreadable: 'อ่าน ~/.claude/settings.json ไม่ได้ (อาจมีคอมเมนต์อยู่) ตั้งโมเดลในไฟล์นั้นเอง',
     failed: 'เขียนตั้งค่าของ Claude Code ไม่ได้',
+    splitNote: "## Big tasks: hand parts to subagents\nWhen a task has several independent parts (reading or researching in many places, edits that don't touch each other), give each part to a subagent with the Agent tool, and run the independent ones in parallel. This session coordinates: it splits the work, writes each subagent a brief with the context it needs, puts the results together and checks them before saying it is done. Small tasks, or ones that need one unbroken line of context, it does itself.",
   },
   ai: {
     noAccount: 'บัญชีนั้นไม่อยู่ในรายการแล้ว',
@@ -105,6 +107,9 @@ export default {
     gone: 'งานนี้ไม่อยู่บนบอร์ดแล้ว',
   },
   loop: {
+    deny: 'My Office blocked this call: it has already run {n} times and failed with the same error each time, so running it again unchanged will fail the same way. Try a different approach, or stop and ask the user.',
+    stopReason: 'Stopped from My Office by the user.',
+    hintFor: 'A hint from the user, sent from My Office: {hint}',
     pushTitle: '⛔ {name} ดูเหมือนจะติดอยู่',
     resting: '{name} พักอยู่แล้ว: ไม่มีอะไรให้หยุด',
     gone: 'session นี้ปิดไปแล้ว',
@@ -112,25 +117,33 @@ export default {
   ci: {
     pushTitle: '🔴 {repo}: CI แดง',
     pushBody: '{wf} บน {branch} เพิ่งล้มเหลว เปิดแชตกลุ่มแล้วแตะ "แก้เลย" ให้ Claude แก้',
+    fix: 'CI "{wf}" on branch {branch} just went red: {url}\nRead the failing step\'s log (gh run view {run} --log-failed), find the cause, fix it, then run that same check here. When done, tell me why it failed and what you changed. Don\'t push until I say so.',
     gone: 'การ์ด CI นี้ไม่อยู่แล้ว',
     notRed: 'CI นี้ไม่แดงแล้ว',
   },
   overlap: {
+    file: "[My Office] Another session on this computer, “{name}”, edited this file at {time}. Read the file again right before editing it and don't overwrite that session's changes; if the two pieces of work clash, stop and ask the user.",
+    port: "[My Office] Port {port} is held by {holder}. It may be another session's or the user's: don't stop or kill that process yourself; use another port, or ask the user.",
+    holder: '{label} (running {up})',
+    holderOf: '{label} from {owner} (running {up})',
     someone: 'process อื่น',
   },
   pins: {
+    context: '[My Office] This conversation was just compacted. The user pinned the following for it; keep following them:',
     noSid: 'ยังไม่รู้ id ของบทสนทนานี้: ส่งข้อความหามันก่อน',
     full: 'ปักหมุดไว้ {n} รายการแล้ว: ลบออกหนึ่งอันก่อน',
   },
   undo: {
     busy: '{name} กำลังทำงาน: รอให้เสร็จก่อนค่อยย้อน',
     nothing: 'ไม่มีอะไรให้ย้อนแล้ว',
+    tell: "[My Office] The user just undid the previous turn's file changes; these files are back as they were before it: {files}. Read them again before going on, and don't redo those changes unless asked.",
   },
   deny: { over: 'คำขอนี้ไม่ได้รออยู่แล้ว: Claude ไปต่อแล้ว' },
   cache: {
     nudgeTitle: { one: '☕ {name} จะเย็นในอีก {n} นาที', other: '☕ {name} จะเย็นในอีก {n} นาที' },
     nudgeBody: 'มันรอคำตอบของคุณอยู่ ตอบตอนนี้จะทำต่อได้ถูกๆ ถ้าเย็นแล้ว ข้อความถัดไปจะอ่านใหม่ ~{tokens}k token',
   },
+  steer: { note: '[The user, cutting in through My Office (from their phone) while you work]\n{text}' },
   push: {
     permTitle: '⚠️ {name} รอคุณอนุมัติ (ภายใน 45 วิ)',
     waitTitle: '⚠️ {name} รอคุณอนุมัติ',
@@ -150,6 +163,11 @@ export default {
     locked: { one: 'ใส่ผิดหลายครั้งเกินไป ลองใหม่ในอีก {n} นาที', other: 'ใส่ผิดหลายครั้งเกินไป ลองใหม่ในอีก {n} นาที' },
     wrong: { one: 'PIN ผิด เหลืออีก {n} ครั้ง', other: 'PIN ผิด เหลืออีก {n} ครั้ง' },
     needed: 'ต้องใส่ PIN',
+  },
+  perm: {
+    denied: 'The user denied this in My Office.',
+    planRevise: 'The user has not approved the plan and wants it revised.',
+    planReviseWhy: 'The user has not approved the plan and wants it revised: {why}',
   },
   rule: {
     session: 'ใน session นี้',
@@ -189,6 +207,12 @@ export default {
     noPid: 'ไม่รู้ process ของ session นี้',
     noApp: 'หาแอปที่รัน session นี้ไม่เจอ',
     failed: 'เปิดหน้าต่างไม่ได้',
+  },
+  console: {
+    noBuild: '[my-office] ยังไม่มีไฟล์ build: รัน `npm run build` หนึ่งครั้งแล้วเริ่มใหม่',
+    listening: '[my-office] http://localhost:{port}  ·  มือถือ: {phone}',
+    lanOff: 'ปิดอยู่ (เริ่มด้วย --lan เพื่อเปิด)',
+    noLan: '(ไม่พบเครือข่าย LAN)',
   },
   sys: {
     grew: 'RAM เพิ่มขึ้น {size} ใน {time}',

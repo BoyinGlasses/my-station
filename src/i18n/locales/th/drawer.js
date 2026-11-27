@@ -9,6 +9,7 @@ export default {
   opened: 'เปิด {app} แล้ว',
   openFailed: 'เปิดไม่ได้',
   unreachable: 'ติดต่อ My Office ไม่ได้',
+  sessionGone: 'session นี้ไม่ได้เปิดอยู่แล้ว (เซิร์ฟเวอร์รีสตาร์ท หรือปิด session ไปแล้ว)',
   openWindow: 'เปิดหน้าต่าง',
   openWindowTerminal: 'เปิดหน้าต่าง terminal',
   openWindowIde: 'เปิดหน้าต่าง IDE',

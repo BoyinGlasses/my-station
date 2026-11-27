@@ -10,11 +10,13 @@ const leaves = (o, p = '') => Object.entries(o).flatMap(([k, v]) =>
   v && typeof v === 'object' && !Array.isArray(v) && !('other' in v) ? leaves(v, `${p}${k}.`) : [`${p}${k}`]);
 const has = (dict, key) => key.split('.').reduce((o, k) => (o && typeof o === 'object' ? o[k] : undefined), dict) !== undefined;
 
-test('every language only has keys that English has', () => {
+test('every language matches English key set bidirectionally', () => {
   const en = new Set(leaves(dicts[DEFAULT_LANG]));
   for (const [lang, dict] of Object.entries(dicts)) {
     if (lang === DEFAULT_LANG) continue;
-    assert.deepEqual(leaves(dict).filter((k) => !en.has(k)), [], `${lang} has keys English does not`);
+    const keys = new Set(leaves(dict));
+    assert.deepEqual([...keys].filter((k) => !en.has(k)), [], `${lang} has keys English does not`);
+    assert.deepEqual([...en].filter((k) => !keys.has(k)), [], `${lang} is missing English keys`);
   }
 });
 
