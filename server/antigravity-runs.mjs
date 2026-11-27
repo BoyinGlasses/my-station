@@ -16,10 +16,13 @@ export async function changedConversations(dirs, since) {
   return out;
 }
 
-export function watchAntigravity({ dirs, onActive, everyMs = 3000, now = Date.now }) {
-  let since = now(), busy = false;
+export function watchAntigravity({ dirs, onActive, everyMs = 3000, now = Date.now, watching = () => true }) {
+  let since = now(), busy = false, lastScan = 0;
+  const idleMs = Math.max(everyMs * 10, 30_000);
   const t = setInterval(async () => {
-    if (busy) return; busy = true;
+    const cur = now();
+    if (busy || (!watching() && lastScan && cur - lastScan < idleMs)) return;
+    busy = true; lastScan = cur;
     try {
       const hits = await changedConversations(dirs, since);
       for (const h of hits) { since = Math.max(since, h.mtime); onActive(h); }
