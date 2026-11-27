@@ -11,7 +11,8 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { createAgentRpc } from './agent-rpc.mjs';
+import { EDITORS } from './editors.mjs';
 
 const FULL = 98;   // a window this used: the account is out until it resets
 const SEAT_EVERY = 2 * 60e3, SEAT_IDLE_EVERY = 10 * 60e3, OTHER_EVERY = 20 * 60e3, SIGNED_OUT_EVERY = 6 * 3600e3;
@@ -50,12 +51,11 @@ export function outUntil(a, now = Date.now()) {
   return until > now ? until : 0;
 }
 // the program a running codex is, from its command line ('' when it is no codex): which editor's extension, or a terminal
-const EDITORS = [['.antigravity-ide', 'Antigravity IDE'], ['.antigravity', 'Antigravity'], ['.vscode-insiders', 'VS Code Insiders'], ['.vscode', 'VS Code'], ['.cursor', 'Cursor'], ['.windsurf', 'Windsurf'], ['.kiro', 'Kiro'], ['.trae', 'Trae']];
 export function codexProgram(args) {
   const a = String(args || '');
   if (!/(^|[\\/])codex(\.exe)?( |$)/.test(a)) return '';
-  const ed = EDITORS.find(([dot]) => a.includes(`${path.sep}${dot}${path.sep}`) || a.includes(`/${dot}/`));
-  return ed ? ed[1] : 'terminal';
+  const ed = EDITORS.find(({ dot }) => a.includes(`${path.sep}${dot}${path.sep}`) || a.includes(`/${dot}/`));
+  return ed ? ed.label : 'terminal';
 }
 
 /**
@@ -118,37 +118,37 @@ export function createCodexAccounts({ dir, seat, bin, procs = async () => [], op
     running = list.filter((p) => !mine.has(p.pid)).map((p) => ({ pid: p.pid, where: codexProgram(p.args), id: accountAt(p.start) })).filter((p) => p.where);
   }
 
+  const binSpec = (b) => (/\.m?js$/i.test(b) ? { file: process.execPath, args: [b] } : { file: b });
+
   // Codex's own protocol, on an account's home: initialize, then each call in turn; the program ends after the last answer
-  function rpc(home_, calls, timeout = 25_000) {
-    const b = bin(); if (!b) return Promise.resolve({ error: 'noCli' });
-    return new Promise((resolve) => {
-      let child;
-      try { child = spawn(/\.m?js$/.test(b) ? process.execPath : b, [...(/\.m?js$/.test(b) ? [b] : []), 'app-server'], { env: { ...process.env, CODEX_HOME: home_ }, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }); }
-      catch { resolve({ error: 'noCli' }); return; }
-      mine.add(child.pid);
-      const got = [];
-      let over = false;
-      const done = (r) => { if (over) return; over = true; clearTimeout(timer); try { child.kill(); } catch { /* gone */ } mine.delete(child.pid); resolve(r); };
-      const timer = setTimeout(() => done({ error: 'timeout', got }), timeout);
-      const send = (o) => { try { child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...o })}\n`); } catch { /* closed */ } };
-      let buf = '', next = 0;
-      const ask = () => { const [method, params] = calls[next]; send({ id: next + 2, method, params }); };
-      child.stdout.on('data', (d) => {
-        buf += d; let i;
-        while ((i = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, i); buf = buf.slice(i + 1);
-          let m; try { m = JSON.parse(line); } catch { continue; }
-          if (m.id === 1) { send({ method: 'initialized' }); ask(); continue; }
-          if (m.id !== next + 2) continue;
-          got.push(m.error ? { error: m.error.message || 'error' } : m.result);
-          if (++next >= calls.length) done({ got }); else ask();
+  async function rpc(home_, calls, timeout = 25_000) {
+    const b = bin(); if (!b) return { error: 'noCli' };
+    let conn;
+    try { conn = createAgentRpc(binSpec(b), ['app-server'], { env: { ...process.env, CODEX_HOME: home_ } }); }
+    catch { return { error: 'noCli' }; }
+    const pid = conn.child.pid;
+    if (pid) mine.add(pid);
+    const got = [];
+    try {
+      await conn.request('initialize', { clientInfo: { name: 'my-office', title: 'My Office', version: '1' }, capabilities: null }, timeout);
+      conn.notify('initialized');
+      for (const [method, params] of calls) {
+        try { got.push(await conn.request(method, params, timeout)); }
+        catch (e) {
+          if (/timed out/i.test(e?.message || '')) return { error: 'timeout', got };
+          if (/closed|exited/i.test(e?.message || '')) return { error: 'exited', got };
+          got.push({ error: e?.message || 'error' });
         }
-      });
-      child.on('error', () => done({ error: 'noCli', got }));
-      child.on('exit', () => done({ error: got.length < calls.length ? 'exited' : null, got }));
-      child.stdin.on('error', () => {});
-      send({ id: 1, method: 'initialize', params: { clientInfo: { name: 'my-office', title: 'My Office', version: '1' }, capabilities: null } });
-    });
+      }
+      return { got };
+    } catch (e) {
+      const msg = String(e?.message || '');
+      const error = /ENOENT/i.test(msg) ? 'noCli' : /timed out/i.test(msg) ? 'timeout' : 'exited';
+      return { error, got };
+    } finally {
+      await conn.close();
+      if (pid) mine.delete(pid);
+    }
   }
 
   /** An account's usage, read by Codex itself: from the seat for the one in it, else from its own copy (never while a
@@ -207,47 +207,48 @@ export function createCodexAccounts({ dir, seat, bin, procs = async () => [], op
    *  added when Codex says it is done (one that is known already: its copy renewed, unless it is the one in the seat). */
   function addStart() {
     if (login?.state === 'waiting') return loginOut();
-    if (!bin()) { login = { state: 'failed', note: 'noCli' }; return loginOut(); }
+    const b = bin();
+    if (!b) { login = { state: 'failed', note: 'noCli' }; return loginOut(); }
     const tmp = path.join(dir, `_login-${now().toString(36)}`);
     fs.mkdirSync(tmp, { recursive: true });
-    const b = bin(), js = /\.m?js$/.test(b);
-    let child;
-    // (the sign-in into a file, whatever Codex's default store: the office moves it into the seat later)
-    try { child = spawn(js ? process.execPath : b, [...(js ? [b] : []), 'app-server', '-c', 'cli_auth_credentials_store="file"'], { env: { ...process.env, CODEX_HOME: tmp }, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }); }
-    catch { login = { state: 'failed', note: 'noCli' }; return loginOut(); }
-    mine.add(child.pid);
-    const L = login = { state: 'waiting', url: '', note: '', name: '', child, tmp };
-    const send = (o) => { try { child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...o })}\n`); } catch { /* closed */ } };
+    const L = login = { state: 'waiting', url: '', note: '', name: '', conn: null, tmp };
     const end = (state, note = '') => {
       if (L.state !== 'waiting') return;
       Object.assign(L, { state, note }); clearTimeout(L.timer);
-      try { child.kill(); } catch { /* gone */ }
-      mine.delete(child.pid);
+      const pid = L.conn?.child?.pid;
+      L.conn?.close();
+      if (pid) mine.delete(pid);
       setTimeout(() => fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}), 1500).unref?.();
       onChange();
     };
-    L.timer = setTimeout(() => end('failed', 'timeout'), 15 * 60e3); L.timer.unref?.();
-    let buf = '';
-    child.stdout.on('data', async (d) => {
-      buf += d; let i;
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i); buf = buf.slice(i + 1);
-        let m; try { m = JSON.parse(line); } catch { continue; }
-        if (m.id === 1) { send({ method: 'initialized' }); send({ id: 2, method: 'account/login/start', params: { type: 'chatgpt' } }); }
-        else if (m.id === 2) {
-          if (m.error || !m.result?.authUrl) { end('failed', m.error?.message || ''); continue; }
-          L.url = m.result.authUrl; L.loginId = m.result.loginId; openUrl(L.url); onChange();
-        } else if (m.method === 'account/login/completed') {
-          if (!m.params?.success) { end('failed', m.params?.error || ''); continue; }
+    let conn;
+    // (the sign-in into a file, whatever Codex's default store: the office moves it into the seat later)
+    try {
+      conn = createAgentRpc(binSpec(b), ['app-server', '-c', 'cli_auth_credentials_store="file"'], {
+        env: { ...process.env, CODEX_HOME: tmp },
+        onNotify: async (method, params) => {
+          if (method !== 'account/login/completed') return;
+          if (!params?.success) { end('failed', params?.error || ''); return; }
           const r = await saveLogin(tmp);
           L.name = r.name || ''; end(r.ok ? 'done' : 'failed', r.ok ? '' : r.code);
-        }
+        },
+        onClose: (e) => end('failed', /ENOENT/i.test(e?.message || '') ? 'noCli' : 'exited'),
+      });
+    } catch { login = { state: 'failed', note: 'noCli' }; return loginOut(); }
+    L.conn = conn;
+    if (conn.child.pid) mine.add(conn.child.pid);
+    L.timer = setTimeout(() => end('failed', 'timeout'), 15 * 60e3); L.timer.unref?.();
+    (async () => {
+      try {
+        await conn.request('initialize', { clientInfo: { name: 'my-office', title: 'My Office', version: '1' }, capabilities: null });
+        conn.notify('initialized');
+        const res = await conn.request('account/login/start', { type: 'chatgpt' });
+        if (!res?.authUrl) { end('failed', ''); return; }
+        L.url = res.authUrl; L.loginId = res.loginId; openUrl(L.url); onChange();
+      } catch (e) {
+        end('failed', /ENOENT/i.test(e?.message || '') ? 'noCli' : e?.message || '');
       }
-    });
-    child.on('error', () => end('failed', 'noCli'));
-    child.on('exit', () => end('failed', 'exited'));
-    child.stdin.on('error', () => {});
-    send({ id: 1, method: 'initialize', params: { clientInfo: { name: 'my-office', title: 'My Office', version: '1' }, capabilities: null } });
+    })();
     return loginOut();
   }
   async function saveLogin(tmp) {
@@ -264,8 +265,18 @@ export function createCodexAccounts({ dir, seat, bin, procs = async () => [], op
   }
   function addCancel() {
     if (login?.state !== 'waiting') return;
-    if (login.loginId) { try { login.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'account/login/cancel', params: { loginId: login.loginId } })}\n`); } catch { /* closed */ } }
-    const L = login; setTimeout(() => { if (L.state === 'waiting') { L.state = 'cancelled'; try { L.child.kill(); } catch { /* gone */ } mine.delete(L.child.pid); fsp.rm(L.tmp, { recursive: true, force: true }).catch(() => {}); onChange(); } }, 300);
+    if (login.loginId) login.conn?.request('account/login/cancel', { loginId: login.loginId }, 300).catch(() => {});
+    const L = login;
+    setTimeout(() => {
+      if (L.state === 'waiting') {
+        L.state = 'cancelled'; clearTimeout(L.timer);
+        const pid = L.conn?.child?.pid;
+        L.conn?.close();
+        if (pid) mine.delete(pid);
+        fsp.rm(L.tmp, { recursive: true, force: true }).catch(() => {});
+        onChange();
+      }
+    }, 300);
   }
   const loginOut = () => (login ? { state: login.state, url: login.url || '', note: login.note || '', name: login.name || '' } : null);
 
