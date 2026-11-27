@@ -20,10 +20,11 @@ import { redact } from './redact.mjs';
 import { normalizeAgentEvent, normalizeTool } from './agent-events.mjs';
 import { readCodexHistory } from './codex-history.mjs';
 import { createAgentHistory } from './agent-history.mjs';
-import { cliCommand, createBinFinder } from './cli-command.mjs';
+import { createBinFinder } from './cli-command.mjs';
 import { editorByDot, claudeEditorSettings } from './editors.mjs';
 import { createTranslator } from './translate.mjs';
 import { createAuth, KEEP_DAYS } from './auth.mjs';
+import { createTunnel } from './tunnel.mjs';
 import { createUndo, EDIT_TOOLS as UNDO_TOOLS } from './undo.mjs';
 import { createVault } from './vault.mjs';
 import { MAIN, SUB, modelsOf, withModels, hasSplit, withSplit } from './models.mjs';
@@ -3331,39 +3332,9 @@ if (!NO_NEXT) {
   }
 }
 
-/* ---------- phones on the home network, switched on in the office (the phone window) ----------
-   Besides 127.0.0.1 the office then listens on each of the Mac's own network addresses (Wi-Fi, Ethernet, a Tailscale
-   network), never on "every address", and only while the switch is on (prefs lan; `install --lan` / OFFICE_HOST still
-   works the old way, and the switch then shows it on for good). Phones still need the PIN. The Mac's addresses change
-   with its network: looked at again every 30 seconds. Off: the listeners close and the phones' pages are cut off. */
-const lanFixed = HOST !== '127.0.0.1' && HOST !== 'localhost';
-const lanServers = new Map();   // address -> its http.Server
-function syncLan() {
-  const want = new Set(!lanFixed && prefs.get('lan') ? Object.values(os.networkInterfaces()).flat().filter((n) => n && n.family === 'IPv4' && !n.internal).map((n) => n.address) : []);
-  for (const [addr, srv] of lanServers) if (!want.has(addr)) { srv.close(); srv.closeAllConnections?.(); lanServers.delete(addr); }
-  for (const addr of want) {
-    if (lanServers.has(addr)) continue;
-    const srv = http.createServer(server.listeners('request')[0]);
-    srv.on('error', () => { if (lanServers.get(addr) === srv) lanServers.delete(addr); });   // (the address went away, or the port is taken on it)
-    srv.listen(PORT, addr); lanServers.set(addr, srv);
-  }
-}
-function lanIsOn() { return lanFixed || lanServers.size > 0; }
-setInterval(syncLan, 30_000).unref();
-
-/* ---------- the office from anywhere (mobile data, another Wi-Fi): a Cloudflare quick tunnel, switched on in the phone
-   window ----------
-   cloudflared (the one installed, else downloaded once from Cloudflare's GitHub releases into data/bin) connects out to
-   Cloudflare and gets an https address, *.trycloudflare.com: no account and no domain, a new address each time it
-   starts. It leads to a listener of its own on 127.0.0.1, and everything that comes that way is from the internet
-   whatever its address looks like (req.viaTunnel): it needs the PIN (no token links), its cookie is https-only, and all
-   that only the Mac may do (hooks, stopping processes, accounts, these switches) refuses it, as it refuses a phone.
-   Off: cloudflared stops and the listener closes, cutting off whoever was in. OFFICE_TUNNEL_CMD: a stand-in (tests). */
-const tunnel = { state: 'off', url: '', host: '', error: '', pid: 0, srv: null, port: 0, tries: 0, gen: 0, watch: null };
-const TUNNEL_PID = path.join(DATA_DIR, 'tunnel.pid'), CF_BIN = path.join(DATA_DIR, 'bin', process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared');
-const tunnelOut = () => ({ ok: true, on: !!prefs.get('tunnel'), state: tunnel.state, url: tunnel.url, error: tunnel.error, port: tunnel.port, pin: currentPin(),
-  awake: process.platform === 'darwin' ? { held: !!awakeProc, ac: powerAC } : null, rc: rcAtStartup(), tasks: !!prefs.get('phoneTasks'), bg: bgOut(),
-  fixed: namedTunnel()?.host || '', domain: domainJob && { state: domainJob.state, host: domainJob.host, note: domainJob.note } });
+const { tunnel, lanFixed, lanServers, syncLan, lanIsOn, tunnelOut, setTunnelDomain, startTunnel, stopTunnel, killStaleTunnel, cleanup: cleanupTunnel } = createTunnel({
+  dataDir: DATA_DIR, port: PORT, host: HOST, prefs, server, osAdapter: OS, alive, actionLog: ACTION_LOG, tr, currentPin, rcAtStartup, bgOut, pushOut,
+});
 // Giving Claude work from a phone is Claude Code's own Remote Control: with remoteControlAtStartup in its settings every
 // new session opens its bridge by itself (the other accounts share these settings by a link), and the office shows each
 // session's link. Switched in the phone window, by you, on the Mac; the rest of the file is left as it is.
@@ -3403,200 +3374,8 @@ function setModels({ main, sub, force, split }) {
   fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} models main=${out.main || 'default'} sub=${out.sub || 'same'}${out.force ? ' (forced)' : ''} split=${out.split ? 'on' : 'off'}\n`).catch(() => {});
   return out;
 }
-// While the tunnel is on, the Mac stays awake so it can be reached (macOS): `caffeinate -s` holds off system sleep on the
-// power adapter only (on battery it sleeps as usual), and the display still turns off; `-w` ends it with this server,
-// however that ends. Turning the tunnel off lets it go. Nothing is changed in the system settings.
-let awakeProc = null, powerAC = null, powerT = null;
-function readPower() { execFile('pmset', ['-g', 'batt'], { timeout: 4000 }, (err, out) => { powerAC = err ? null : /AC Power/.test(String(out)); }); }
-function keepAwake(on) {
-  if (process.platform !== 'darwin') return;
-  if (on && !awakeProc) {
-    const p = awakeProc = spawn('caffeinate', ['-s', '-w', String(process.pid)], { stdio: 'ignore' });
-    p.on('error', () => { if (awakeProc === p) awakeProc = null; }); p.on('exit', () => { if (awakeProc === p) awakeProc = null; });
-    readPower(); clearInterval(powerT); powerT = setInterval(readPower, 60_000); powerT.unref();
-  } else if (!on) {
-    if (awakeProc) { try { awakeProc.kill(); } catch { /* gone */ } awakeProc = null; }
-    clearInterval(powerT); powerT = null;
-  }
-}
-async function cloudflared() {
-  if (process.env.OFFICE_TUNNEL_CMD) return process.env.OFFICE_TUNNEL_CMD;
-  if (fs.existsSync(CF_BIN)) return CF_BIN;
-  const onPath = await new Promise((resolve) => execFile(process.platform === 'win32' ? 'where' : 'which', ['cloudflared'], { timeout: 4000 }, (err, out) => resolve(err ? '' : String(out).split('\n')[0].trim())));
-  if (onPath) return onPath;
-  const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
-  const asset = { darwin: `cloudflared-darwin-${arch}.tgz`, linux: `cloudflared-linux-${arch}`, win32: 'cloudflared-windows-amd64.exe' }[process.platform];
-  if (!asset) throw new Error(tr('server.tunnel.noPlatform'));
-  tunnel.state = 'download';
-  const r = await fetch(`https://github.com/cloudflare/cloudflared/releases/latest/download/${asset}`, { signal: AbortSignal.timeout(180_000) });
-  if (!r.ok) throw new Error(tr('server.tunnel.downloadFailed', { status: r.status }));
-  fs.mkdirSync(path.dirname(CF_BIN), { recursive: true });
-  const tmp = `${CF_BIN}.download`;
-  fs.writeFileSync(tmp, Buffer.from(await r.arrayBuffer()));
-  if (asset.endsWith('.tgz')) { await new Promise((resolve, reject) => execFile('tar', ['-xzf', tmp, '-C', path.dirname(CF_BIN)], (err) => (err ? reject(err) : resolve()))); fs.rmSync(tmp, { force: true }); }
-  else fs.renameSync(tmp, CF_BIN);
-  fs.chmodSync(CF_BIN, 0o755);
-  return CF_BIN;
-}
-// a cloudflared left running by an office that stopped without stopping it (only if that pid is still a cloudflared:
-// pids get reused)
-async function isCloudflared(pid) {
-  if (!(pid > 1) || !alive(pid)) return false;
-  try {
-    if (process.platform === 'win32') {
-      const p = (await OS.processes()).procs.get(pid);
-      return !!p && /cloudflared|tunnel/i.test(`${p.comm} ${p.args}`);
-    }
-    const comm = await new Promise((resolve) => execFile('ps', ['-o', 'comm=', '-p', String(pid)], { timeout: 4000 }, (err, out) => resolve(err ? '' : String(out).trim())));
-    return /cloudflared|tunnel/i.test(path.basename(comm));
-  } catch { return false; }
-}
-async function killStaleTunnel() {
-  try {
-    const pid = Number(fs.readFileSync(TUNNEL_PID, 'utf8'));
-    if (await isCloudflared(pid)) process.kill(pid, 'SIGTERM');
-  } catch { /* none, or gone */ }
-  fs.rmSync(TUNNEL_PID, { force: true });
-}
-// The tunnel outlives a restart of the office (an update, say): cloudflared runs on its own, writing to data/tunnel.log, and
-// leads to a port that doesn't change (OFFICE_TUNNEL_PORT, else the office's + 7), so the office coming back takes the
-// same cloudflared and the same address (data/tunnel.json) and the phone's link still works. Only the switch stops it.
-const TUNNEL_FILE = path.join(DATA_DIR, 'tunnel.json'), TUNNEL_LOG = path.join(DATA_DIR, 'tunnel.log'), TUNNEL_PORT = Number(process.env.OFFICE_TUNNEL_PORT) || PORT + 7;
-const readJsonFile = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
-async function listenTunnel() {
-  if (tunnel.srv) return;
-  const handle = server.listeners('request')[0], srv = http.createServer((req, res) => { req.viaTunnel = true; handle(req, res); });
-  await new Promise((resolve, reject) => { srv.once('error', reject); srv.listen(TUNNEL_PORT, '127.0.0.1', resolve); });
-  tunnel.srv = srv; tunnel.port = TUNNEL_PORT;
-}
-/* A fixed address on your own domain: a named Cloudflare tunnel (prefs tunnelNamed = { id, host, cred }), set up once from
-   the phone window (Cloudflare's login in the browser, the tunnel "my-office", its DNS name on your domain), then run as
-   that name: the same https address for good, so a phone's home-screen app keeps working. Empty again: back to a quick
-   tunnel, a new *.trycloudflare.com each time. */
-const CF_HOME = path.join(os.homedir(), '.cloudflared'), NAMED = 'my-office';
-const namedTunnel = () => { const n = prefs.get('tunnelNamed'); return n?.id && n?.host && n?.cred && fs.existsSync(n.cred) ? n : null; };
-let domainJob = null;   // the setup going on: { state: login | create | route | done | error, host, note }
-function setTunnelDomain(host) {
-  host = String(host || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-  if (domainJob && !['done', 'error'].includes(domainJob.state)) return { ok: false, message: tr('server.tunnel.busy') };
-  const again = () => { if (prefs.get('tunnel')) { stopTunnel(); startTunnel(); } };
-  if (!host) { prefs.set('tunnelNamed', undefined); domainJob = null; again(); return { ok: true }; }
-  if (!/^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host)) return { ok: false, message: tr('server.tunnel.badHost') };
-  const job = domainJob = { state: 'login', host, note: '' };
-  const step = (state) => { job.state = state; };   // (the phone window asks every 2 s while it goes)
-  const fail = (key, vars) => { job.state = 'error'; job.note = tr(key, vars); };
-  (async () => {
-    const rawCmd = await cloudflared(), cmd = cliCommand(rawCmd) || { file: rawCmd };
-    const run = (args, timeout) => new Promise((resolve) => execFile(cmd.file, [...(cmd.args || []), ...args], { timeout, maxBuffer: 4 << 20, windowsHide: true }, (err, out, errOut) => resolve({ ok: !err, out: String(out || ''), err: String(errOut || '') })));
-    // 1. Cloudflare's own login (once a Mac): it opens the browser, you pick the domain and allow
-    if (!fs.existsSync(path.join(CF_HOME, 'cert.pem'))) {
-      const r = await run(['tunnel', 'login'], 5 * 60e3);
-      if (!r.ok || !fs.existsSync(path.join(CF_HOME, 'cert.pem'))) { fail('server.tunnel.loginFailed'); return; }
-    }
-    // 2. the tunnel (made once; its key is the file cloudflared writes beside the login)
-    step('create');
-    const idOf = async () => { const r = await run(['tunnel', 'list', '-o', 'json'], 60e3); try { return JSON.parse(r.out).find((t) => t.name === NAMED)?.id || ''; } catch { return ''; } };
-    let id = await idOf();
-    if (!id) { await run(['tunnel', 'create', NAMED], 60e3); id = await idOf(); }
-    const cred = id && path.join(CF_HOME, `${id}.json`);
-    if (!id || !fs.existsSync(cred)) { fail(id ? 'server.tunnel.noCred' : 'server.tunnel.createFailed', { name: NAMED }); return; }
-    // 3. the name on your domain (never over a record that points somewhere else: that may be your website)
-    step('route');
-    const r = await run(['tunnel', 'route', 'dns', NAMED, host], 60e3);
-    if (!r.ok && !/already configured to route to your tunnel/i.test(r.err + r.out)) { fail(/already exists/i.test(r.err + r.out) ? 'server.tunnel.hostTaken' : 'server.tunnel.routeFailed', { host }); return; }
-    prefs.set('tunnelNamed', { id, host, cred });
-    fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} tunnel fixed address ${host}\n`).catch(() => {});
-    step('done');
-    again();
-  })().catch((e) => fail('server.tunnel.routeFailed', { host: String(e?.message || e).slice(0, 80) }));
-  return { ok: true };
-}
-// Cloudflare can take a quick tunnel back while cloudflared lives on, retrying for ever: its log then says "Tunnel not
-// found" after its last "Registered tunnel connection" (seen 04/11/2026: three days of an address that no longer existed,
-// shown as on). Read from the end of its log, a few KB.
-function tunnelRevoked() {
-  let tail = '';
-  try {
-    const fd = fs.openSync(TUNNEL_LOG, 'r'), size = fs.fstatSync(fd).size, n = Math.min(size, 8192), buf = Buffer.alloc(n);
-    fs.readSync(fd, buf, 0, n, size - n); fs.closeSync(fd); tail = buf.toString('utf8');
-  } catch { return false; }
-  const gone = tail.lastIndexOf('Tunnel not found');
-  return gone >= 0 && gone > tail.lastIndexOf('Registered tunnel connection');
-}
-function tunnelUp(pid, url) {
-  // a new address after Cloudflare took the old one back: to the phones that get notifications (their link is dead)
-  if (tunnel.revoked && tunnel.revoked !== url) pushOut({ title: tr('server.tunnel.newTitle'), body: tr('server.tunnel.newBody', { url }), tag: 'tunnel', url });
-  tunnel.revoked = '';
-  Object.assign(tunnel, { pid, url, host: new URL(url).host, state: 'on', tries: 0, error: '' });
-  try { fs.writeFileSync(TUNNEL_FILE, JSON.stringify({ pid, url, port: tunnel.port })); } catch { /* read-only data */ }
-  console.log(`[my-office] ${tr('server.tunnel.ready', { url })}`);
-  clearInterval(tunnel.watch);
-  tunnel.watch = setInterval(() => {   // (it may drop: the network went away, Cloudflare closed it; again, later each time)
-    if (tunnel.pid && alive(tunnel.pid) && !namedTunnel() && tunnelRevoked()) {   // (taken back but still running: stopped here, started again below)
-      tunnel.revoked = tunnel.url;
-      fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} tunnel taken back by Cloudflare ${tunnel.url} -> a new address\n`).catch(() => {});
-      try { process.kill(tunnel.pid, 'SIGTERM'); } catch { /* gone */ }
-      return;
-    }
-    if (!tunnel.pid || alive(tunnel.pid)) return;
-    clearInterval(tunnel.watch); Object.assign(tunnel, { pid: 0, url: '', host: '' }); fs.rmSync(TUNNEL_FILE, { force: true });
-    if (!prefs.get('tunnel')) { tunnel.state = 'off'; return; }
-    tunnel.state = 'error'; tunnel.error = tr(tunnel.revoked ? 'server.tunnel.revoked' : 'server.tunnel.dropped');
-    if (++tunnel.tries <= 6) setTimeout(() => { if (prefs.get('tunnel')) startTunnel(); }, Math.min(60_000, 3000 * 2 ** tunnel.tries)).unref();
-  }, 5000);
-  tunnel.watch.unref();
-}
-async function startTunnel() {
-  if (tunnel.pid || tunnel.state === 'download' || tunnel.state === 'starting') return;
-  keepAwake(true);
-  const gen = ++tunnel.gen;
-  tunnel.state = 'starting'; tunnel.error = ''; tunnel.url = ''; tunnel.host = '';
-  try {
-    await listenTunnel();
-    // the one left running before a restart, to the same port: the same address
-    const saved = readJsonFile(TUNNEL_FILE);
-    const named = namedTunnel(), want = named ? `https://${named.host}` : null;   // (the same kind: a fixed address, or a quick one)
-    if (saved?.url && saved.port === tunnel.port && saved.pid > 1 && alive(saved.pid) && (await isCloudflared(saved.pid)) && (want ? saved.url === want : /trycloudflare/.test(saved.url))) { tunnelUp(saved.pid, saved.url); return; }
-    await killStaleTunnel();
-    const rawCmd = await cloudflared(), cmd = cliCommand(rawCmd) || { file: rawCmd };
-    if (gen !== tunnel.gen || !prefs.get('tunnel')) return;
-    tunnel.state = 'starting';
-    fs.writeFileSync(TUNNEL_LOG, '');
-    const out = fs.openSync(TUNNEL_LOG, 'a');
-    const args = named ? ['tunnel', '--no-autoupdate', 'run', '--url', `http://127.0.0.1:${tunnel.port}`, '--credentials-file', named.cred, named.id] : ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${tunnel.port}`];
-    const proc = spawn(cmd.file, [...(cmd.args || []), ...args], { stdio: ['ignore', out, out], detached: true, windowsHide: true });
-    fs.closeSync(out); proc.unref();
-    proc.on('error', (err) => { tunnel.error = String(err.message || err).slice(0, 200); });
-    try { fs.writeFileSync(TUNNEL_PID, String(proc.pid)); } catch { /* read-only data */ }
-    // its address, from its log
-    const t0 = Date.now();
-    await new Promise((resolve) => {
-      const look = () => {
-        if (gen !== tunnel.gen) { resolve(); return; }
-        let log = ''; try { log = fs.readFileSync(TUNNEL_LOG, 'utf8'); } catch { /* not yet */ }
-        // its address: a quick tunnel prints it; a named one is up once it registered a connection
-        const m = named ? (/Registered tunnel connection/.test(log) ? [want] : null) : /https:\/\/[a-z0-9-]+\.trycloudflare\.com/.exec(log);
-        if (m) { tunnelUp(proc.pid, m[0]); resolve(); return; }
-        if (!alive(proc.pid) || Date.now() - t0 > 90_000) { tunnel.state = 'error'; tunnel.error ||= clip(oneLine(log.split('\n').filter(Boolean).pop() || tr('server.tunnel.dropped')), 200); try { process.kill(proc.pid); } catch { /* gone */ } resolve(); return; }
-        setTimeout(look, 500);
-      };
-      look();
-    });
-  } catch (err) {
-    if (gen !== tunnel.gen) return;
-    tunnel.state = 'error'; tunnel.error = String(err.message || err).slice(0, 200);
-  }
-}
-function stopTunnel() {
-  tunnel.gen++;
-  keepAwake(false); clearInterval(tunnel.watch);
-  if (tunnel.pid) { try { process.kill(tunnel.pid, 'SIGTERM'); } catch { /* gone */ } }
-  fs.rmSync(TUNNEL_PID, { force: true }); fs.rmSync(TUNNEL_FILE, { force: true });
-  if (tunnel.srv) { tunnel.srv.close(); tunnel.srv.closeAllConnections?.(); tunnel.srv = null; tunnel.port = 0; }
-  Object.assign(tunnel, { state: 'off', url: '', host: '', error: '', tries: 0, pid: 0 });
-}
 // (the office stopping: cloudflared keeps going for when it comes back; staying awake ends with it, caffeinate -w)
-process.on('exit', () => { try { awakeProc?.kill(); } catch { /* gone */ } saveStateSync(); trophies.saveSync(); otel.saveSync(); });
+process.on('exit', () => { cleanupTunnel(); saveStateSync(); trophies.saveSync(); otel.saveSync(); });
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => process.exit(0));
 
 server.listen(PORT, HOST, () => {
