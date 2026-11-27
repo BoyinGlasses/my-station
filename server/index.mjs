@@ -20,7 +20,7 @@ import { redact } from './redact.mjs';
 import { normalizeAgentEvent, normalizeTool } from './agent-events.mjs';
 import { readCodexHistory } from './codex-history.mjs';
 import { createAgentHistory } from './agent-history.mjs';
-import { cliCommand, openCodeCommand as findOpenCode } from './cli-command.mjs';
+import { cliCommand, createBinFinder, verNum } from './cli-command.mjs';
 import { editorByDot, claudeEditorSettings } from './editors.mjs';
 import { createUndo, EDIT_TOOLS as UNDO_TOOLS } from './undo.mjs';
 import { createVault } from './vault.mjs';
@@ -2199,93 +2199,7 @@ setInterval(scanAccounts, 60_000).unref();   // (a login made in a terminal show
 const slugOf = (name) => String(name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20).replace(/-+$/, '');
 /* Claude Code's CLI: on the PATH, else the usual install places and the editors' extensions (VS Code, Cursor, Windsurf,
    Antigravity…: the newest), where it often is when Claude Code came with an editor and was never put on the PATH */
-let claudeBin = null;
-const binCache = new Map();
-function cachedBin(key, envVar, resolve) {
-  const envVal = process.env[envVar] || '';
-  const hit = binCache.get(key), now = Date.now();
-  if (hit && hit.envVal === envVal && now - hit.at < 60_000 && (!hit.val || fs.existsSync(hit.val.file))) return hit.val;
-  const val = resolve();
-  binCache.set(key, { envVal, val, at: now });
-  return val;
-}
-const findOpenCodeCached = () => cachedBin('opencode', 'OFFICE_OPENCODE_BIN', () => findOpenCode());
-function findCodex() {
-  return cachedBin('codex', 'OFFICE_CODEX_BIN', () => {
-    const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
-    const asCommand = (f) => /\.[cm]?js$/i.test(f) ? { file: process.execPath, args: [f], protocol: 'codex' } : { file: f, protocol: 'codex' };
-    const override = process.env.OFFICE_CODEX_BIN;
-    if (override && isFile(override)) return asCommand(override);
-    const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
-    for (const d of dirs) {
-      const exe = path.join(d, process.platform === 'win32' ? 'codex.exe' : 'codex');
-      if (isFile(exe)) return asCommand(exe);
-      const npm = path.join(d, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
-      if (isFile(npm)) return asCommand(npm);
-    }
-    const exe = process.platform === 'win32' ? 'codex.exe' : 'codex', found = [];
-    for (const ide of ['.antigravity-ide', '.antigravity', '.vscode', '.vscode-insiders', '.cursor', '.windsurf', '.kiro', '.trae']) {
-      const base = path.join(os.homedir(), ide, 'extensions');
-      let names = []; try { names = fs.readdirSync(base).filter((e) => /^openai\.chatgpt-/.test(e)); } catch { /* not installed */ }
-      for (const e of names) { try { for (const p of fs.readdirSync(path.join(base, e, 'bin'))) if (isFile(path.join(base, e, 'bin', p, exe))) found.push(path.join(base, e, 'bin', p, exe)); } catch { /* no programs */ } }
-    }
-    const latest = found.sort((a, b) => verNum(b) - verNum(a))[0];
-    return latest ? asCommand(latest) : null;
-  });
-}
-function findAntigravity() {
-  return cachedBin('antigravity', 'OFFICE_ANTIGRAVITY_BIN', () => {
-    const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
-    const asCommand = (f) => /\.[cm]?js$/i.test(f) ? { file: process.execPath, args: [f], protocol: 'acp' } : { file: f, protocol: 'acp' };
-    const override = process.env.OFFICE_ANTIGRAVITY_BIN;
-    if (override && isFile(override)) return asCommand(override);
-    for (const d of String(process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
-      const exe = path.join(d, process.platform === 'win32' ? 'agy.exe' : 'agy');
-      if (isFile(exe)) return asCommand(exe);
-    }
-    const installed = path.join(process.env.LOCALAPPDATA || path.join(HOME, '.local'), 'agy', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy');
-    return isFile(installed) ? asCommand(installed) : null;
-  });
-}
-function findZCode() {
-  return cachedBin('zcode', 'OFFICE_ZCODE_BIN', () => {
-    const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
-    const asCommand = (f) => /\.[cm]?js$/i.test(f) ? { file: process.execPath, args: [f] } : { file: f };
-    const override = process.env.OFFICE_ZCODE_BIN;
-    if (override && isFile(override)) return asCommand(override);
-    const resources = process.platform === 'win32' ? path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ZCode', 'resources') : process.platform === 'darwin' ? '/Applications/ZCode.app/Contents/Resources' : '';
-    if (resources) {
-      const script = path.join(resources, 'glm', 'zcode.cjs'), config = path.join(resources, 'config', 'provider', 'zcode-builtin.json');
-      if (isFile(script) && isFile(config)) return { ...asCommand(script), env: { ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: config } };
-    }
-    for (const d of String(process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
-      const exe = path.join(d, process.platform === 'win32' ? 'zcode.exe' : 'zcode');
-      if (isFile(exe)) return asCommand(exe);
-    }
-    return null;
-  });
-}
-function findClaude() {
-  if (claudeBin && fs.existsSync(claudeBin.file)) return claudeBin;
-  const home = os.homedir(), exe = process.platform === 'win32' ? 'claude.exe' : 'claude', isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
-  if (process.env.OFFICE_CLAUDE_BIN && isFile(process.env.OFFICE_CLAUDE_BIN)) {
-    const cmd = cliCommand(process.env.OFFICE_CLAUDE_BIN) || { file: process.env.OFFICE_CLAUDE_BIN };
-    return (claudeBin = { ...cmd, onPath: false });
-  }
-  // Windows npm installs put only claude.cmd on the PATH; the real exe sits in that folder's node_modules
-  const npmExe = (d) => path.join(d, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', exe);
-  for (const d of String(process.env.PATH || '').split(path.delimiter)) {
-    if (d && isFile(path.join(d, exe))) return (claudeBin = { file: path.join(d, exe), onPath: true });
-    if (d && process.platform === 'win32' && isFile(npmExe(d))) return (claudeBin = { file: npmExe(d), onPath: true });
-  }
-  for (const f of [...(process.env.APPDATA ? [npmExe(path.join(process.env.APPDATA, 'npm'))] : []), path.join(home, '.local', 'bin', exe), path.join(home, '.claude', 'local', exe), '/opt/homebrew/bin/claude', '/usr/local/bin/claude', path.join(home, '.npm-global', 'bin', exe), path.join(home, '.bun', 'bin', exe)]) if (isFile(f)) return (claudeBin = { file: f, onPath: false });
-  const ver = (f) => (/claude-code-(\d+)\.(\d+)\.(\d+)/.exec(f) || [0, 0, 0, 0]).slice(1).reduce((a, n) => a * 1000 + Number(n), 0), found = [];
-  for (const ide of ['.vscode', '.vscode-insiders', '.cursor', '.windsurf', '.antigravity', '.antigravity-ide', '.kiro', '.trae', '.positron']) {
-    try { for (const e of fs.readdirSync(path.join(home, ide, 'extensions'))) if (/^anthropic\.claude-code-/.test(e)) found.push(path.join(home, ide, 'extensions', e, 'resources', 'native-binary', exe)); } catch { /* not installed */ }
-  }
-  const best = found.filter(isFile).sort((a, b) => ver(b) - ver(a))[0];
-  return (claudeBin = best ? { file: best, onPath: false } : null);
-}
+const { findClaude, findCodex, findOpenCode: findOpenCodeCached, findAntigravity, findZCode } = createBinFinder({ home: HOME });
 // the command that starts Claude Code with an account's folder (for working with it later): `claude` when the PATH has it
 function accountCmd(slug) {
   const bin = findClaude(), cli = !bin || bin.onPath ? 'claude' : `"${bin.file}"`;
@@ -2653,7 +2567,6 @@ const AI_OFF = process.env.OFFICE_AI_ACCOUNTS === '0';
 let aiTimer = null;
 const aiSoon = () => { clearTimeout(aiTimer); aiTimer = setTimeout(() => broadcast({ k: 'ai', ai: aiOut() }), 250); };
 const aiName = (a) => (a ? a.label || String(a.email || '').split('@')[0] || a.name || a.id : '');
-const verNum = (f) => (/-(\d+)\.(\d+)\.(\d+)/.exec(f) || [0, 0, 0, 0]).slice(1).reduce((x, n) => x * 100000 + Number(n), 0);
 function openUrl(u) {
   if (!/^https?:\/\//.test(u) || process.env.OFFICE_OPEN_URL === '0') return;   // (0: the tests, which never open a browser)
   const [cmd, args] = process.platform === 'darwin' ? ['open', [u]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', u.replace(/&/g, '^&')]] : ['xdg-open', [u]];
