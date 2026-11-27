@@ -86,9 +86,17 @@ test('/event rejects browser Origins and foreign Host headers while accepting cl
   }
 });
 
-test('toVi redacts secrets before any translation lookup or network request', async () => {
-  const src = fs.readFileSync(new URL('../../server/index.mjs', import.meta.url), 'utf8');
-  const fnMatch = /async function toVi\(text\)\s*\{([\s\S]*?)^\}/m.exec(src);
-  assert.ok(fnMatch, 'toVi exists');
+test('toVi redacts secrets before any translation lookup or network request', async (t) => {
+  const { createTranslator } = await import('../../server/translate.mjs');
+  const { redact } = await import('../../server/redact.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'office-tr-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const tr = createTranslator({ dataDir: dir, redact, enabled: false, lang: () => 'vi', onTranslated: () => {} });
+  t.after(() => tr.stop());
+  const out = await tr.toVi('Deploy key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789');
+  assert.doesNotMatch(out, /sk-ant-api03/);
+  const src = fs.readFileSync(new URL('../../server/translate.mjs', import.meta.url), 'utf8');
+  const fnMatch = /async function toVi\(text\)\s*\{([\s\S]*?)^\s*\}/m.exec(src);
+  assert.ok(fnMatch, 'toVi exists in server/translate.mjs');
   assert.match(fnMatch[1].trimStart(), /^text = redact\(/, 'toVi must redact input before cache/network use');
 });

@@ -20,8 +20,9 @@ import { redact } from './redact.mjs';
 import { normalizeAgentEvent, normalizeTool } from './agent-events.mjs';
 import { readCodexHistory } from './codex-history.mjs';
 import { createAgentHistory } from './agent-history.mjs';
-import { cliCommand, createBinFinder, verNum } from './cli-command.mjs';
+import { cliCommand, createBinFinder } from './cli-command.mjs';
 import { editorByDot, claudeEditorSettings } from './editors.mjs';
+import { createTranslator } from './translate.mjs';
 import { createUndo, EDIT_TOOLS as UNDO_TOOLS } from './undo.mjs';
 import { createVault } from './vault.mjs';
 import { MAIN, SUB, modelsOf, withModels, hasSplit, withSplit } from './models.mjs';
@@ -163,52 +164,16 @@ function bashLabel(i) {
   return clip(hit ? `${tr(`server.cmd.${hit[1]}`)} · ${short}` : short, 48);
 }
 
-// When the office speaks Vietnamese, English descriptions (written by Claude) become Vietnamese via Google's free
-// translate endpoint, cached on disk. OFFICE_TRANSLATE=0 keeps everything local.
-const VI_CHARS = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i;
-const TRANSLATE = process.env.OFFICE_TRANSLATE !== '0';
-const VI_FILE = path.join(DATA_DIR, 'vi-cache.json');
-let viCache = {};
-try { viCache = JSON.parse(fs.readFileSync(VI_FILE, 'utf8')); } catch { /* first run */ }
-let viDirty = false;
-setInterval(() => {
-  if (!viDirty) return;
-  viDirty = false;
-  const keys = Object.keys(viCache);
-  if (keys.length > 3000) for (const k of keys.slice(0, keys.length - 3000)) delete viCache[k];
-  fsp.writeFile(VI_FILE, JSON.stringify(viCache)).catch(() => {});
-}, 15_000).unref();
-// One request per text at a time, three tries a few seconds apart (the free endpoint rate-limits in bursts).
-const viWait = new Map();
-function fetchVi(text) {
-  if (viWait.has(text)) return viWait.get(text);
-  const job = (async () => {
-    for (let k = 0; k < 3; k++) {
-      try {
-        const r = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&q=${encodeURIComponent(text)}`, { signal: AbortSignal.timeout(4000) });
-        if (r.ok) { const j = await r.json(); const out = (j?.[0] || []).map((x) => x?.[0] || '').join('').trim(); if (out) { viCache[text] = out; viDirty = true; return out; } }
-      } catch { /* offline or rate-limited */ }
-      await new Promise((res) => setTimeout(res, 1500 * (k + 1)));
-    }
-    return null;
-  })().finally(() => viWait.delete(text));
-  viWait.set(text, job);
-  return job;
-}
-// Never blocks hook handling: returns cached or redacted text immediately, translating in the background and
-// broadcasting {k:'vi', from, to} when ready so the page swaps the words in without stalling the hook queue.
-async function toVi(text) {
-  text = redact(String(text || ''));
-  if (!TRANSLATE || prefs.lang() !== 'vi' || !text || VI_CHARS.test(text) || !/[a-z]{3}/i.test(text)) return text;
-  if (viCache[text]) return viCache[text];
-  fetchVi(text).then((late) => {
-    if (!late || late === text) return;
-    for (const x of feed) { if (x.label === text) x.label = late; if (x.desc === text) x.desc = late; }
-    for (const s of sessions.values()) for (const o of [s, ...Object.values(s.subs || {})]) { if (o.last?.label === text) o.last.label = late; if (o.desc === text) o.desc = late; }
-    broadcast({ k: 'vi', from: text, to: late });
-  }).catch(() => {});
-  return text;
-}
+const { toVi, cached: viCached } = createTranslator({
+  dataDir: DATA_DIR,
+  redact,
+  lang: () => prefs.lang(),
+  onTranslated: (from, to) => {
+    for (const x of feed) { if (x.label === from) x.label = to; if (x.desc === from) x.desc = to; }
+    for (const s of sessions.values()) for (const o of [s, ...Object.values(s.subs || {})]) { if (o.last?.label === from) o.last.label = to; if (o.desc === from) o.desc = to; }
+    broadcast({ k: 'vi', from, to });
+  },
+});
 /* ---------- images a session touched: the feed shows them, a click opens them (GET /api/image?id=) ----------
    Only files a session read, wrote or edited with an image's extension, looked up by an id (never a path sent by the
    page); the last 400 remembered across restarts (data/images.json). */
@@ -1321,7 +1286,7 @@ async function readLog(s, n = 120, agentId = null) {
           else if (b.type === 'tool_use') {
             // Bash descriptions are already translated when the hook saw them; reuse the cache, never wait on the network here.
             const k = classify(b.name, b.input);
-            items.push({ role: 'tool', type: k.type, label: (k.tr && viCache[k.label]) || k.label, desc: k.desc ? viCache[k.desc] || k.desc : '', ts });
+            items.push({ role: 'tool', type: k.type, label: (k.tr && viCached(k.label)) || k.label, desc: k.desc ? viCached(k.desc) || k.desc : '', ts });
           }
         }
       }
