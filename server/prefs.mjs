@@ -14,11 +14,17 @@ export function createPrefs(dataDir) {
   let prefs = {};
   try { prefs = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { /* first run */ }
   const lang = () => pickLang(prefs.lang || process.env.OFFICE_LANG);
+  let seq = 0;
   const save = () => {
-    fs.mkdirSync(dataDir, { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(prefs, null, 2));
-    fs.renameSync(tmp, file);
+    const tmp = `${file}.${process.pid}.${++seq}.tmp`;
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(tmp, JSON.stringify(prefs, null, 2));
+      fs.renameSync(tmp, file);
+    } catch (err) {
+      console.error('prefs save', err?.message || err);
+      try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ }
+    }
   };
   return {
     lang,
