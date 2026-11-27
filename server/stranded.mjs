@@ -19,11 +19,17 @@ function git(args, cwd, timeout = 5000) {
   return new Promise((resolve) => execFile('git', args, { cwd, timeout, maxBuffer: 8 << 20, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' } },
     (err, out, errOut) => resolve(err ? { ok: false, out: String(out || ''), err: String(errOut || err.message || '') } : { ok: true, out: String(out) })));
 }
-const real = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };   // (native: Windows' long names, not RUNNER~1)
+const normWin = (p) => (p && process.platform === 'win32' ? p.replace(/^[a-z]:/, (c) => c.toUpperCase()) : p);
+const samePath = (a, b) => !!a && !!b && (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+const real = (p) => { try { return normWin(fs.realpathSync.native(p)); } catch { return normWin(path.resolve(p)); } };   // (native: Windows' long names, not RUNNER~1)
 export const idOf = (p) => crypto.createHash('sha1').update(p).digest('hex').slice(0, 12);
 // git writes paths with / on Windows too (D:/a/b): this computer's own form, so they compare with the session folders
-const ours = (list) => list.map((w) => ({ ...w, path: w.path && path.resolve(w.path) }));
-const inside = (child, dir) => !!child && (child === dir || child.startsWith(dir.endsWith(path.sep) ? dir : dir + path.sep));
+const ours = (list) => list.map((w) => ({ ...w, path: w.path && normWin(path.resolve(w.path)) }));
+const inside = (child, dir) => {
+  if (!child || !dir) return false;
+  const c = process.platform === 'win32' ? child.toLowerCase() : child, d = process.platform === 'win32' ? dir.toLowerCase() : dir;
+  return c === d || c.startsWith(d.endsWith(path.sep) ? d : d + path.sep);
+};
 
 // a lock or prune reason git wrote C-style (in quotes, \n for a new line) when it isn't asked for -z
 function unquote(s) {
@@ -234,8 +240,8 @@ export function createStranded({ dirs, inUse = () => false, home = os.homedir(),
     },
     /** A folder from the last look ('~/…' or absolute), for giving Claude the rest of its work. */
     dirOf(dir) {
-      const want = path.resolve(String(dir || '').replace(/^~(?=$|[\\/])/, home));
-      return last.items.find((it) => it.path === want)?.path || null;
+      const want = normWin(path.resolve(String(dir || '').replace(/^~(?=$|[\\/])/, home)));
+      return last.items.find((it) => samePath(it.path, want))?.path || null;
     },
     entry: (id) => byId.get(String(id || '')) || null,
     /** Removes a linked worktree after reading it again: { ok, code?, why?, w } */
@@ -246,7 +252,7 @@ export function createStranded({ dirs, inUse = () => false, home = os.homedir(),
       if (!canRemove({ ...was, inUse: busy })) return { ok: false, code: busy ? 'inUse' : 'notClean', w: was };
       // again, now: still one of the repository's linked worktrees, not locked, nothing new in it
       const wl = await git(['worktree', 'list', '--porcelain', '-z'], was.repoRoot, 5000), all = wl.ok ? ours(parseWorktrees(wl.out)) : [];
-      const w = all.find((x) => x.path === was.path);
+      const w = all.find((x) => samePath(x.path, was.path));
       if (!w || w.main) return { ok: false, code: 'gone', w: was };
       const rem = await git(['remote'], was.repoRoot, 3000);
       const repo = { name: was.repo, remotes: rem.ok ? rem.out.split('\n').filter(Boolean).length : 0, mainHead: all[0].bare ? '' : all[0].head, stashes: 0 };
