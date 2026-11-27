@@ -14,11 +14,11 @@ const TOOL = new Set(['read', 'edit', 'shell', 'web', 'agent']);
 export const TURN_CAP = 30 * 60e3;
 
 export function buildTimeline(items, from, to) {
-  // Rows are keyed by session name: the office gives a session a new id each time it restarts, the name stays.
-  const rows = new Map(), nameOf = new Map();
-  const keyOf = (sess) => nameOf.get(sess) || sess;
-  const row = (sess, agent, name) => {
-    if (name && !agent) nameOf.set(sess, name);
+  // Rows are keyed by stable session identity (sid when present, else id/name), so two sessions in the same project don't merge.
+  const rows = new Map(), keyMap = new Map();
+  const keyOf = (sess) => keyMap.get(sess) || sess;
+  const row = (sess, agent, name, sid = null) => {
+    if (!agent && (sid || !keyMap.has(sess))) keyMap.set(sess, sid || sess);
     const key = agent ? `${keyOf(sess)}|${agent}` : keyOf(sess);
     let r = rows.get(key);
     if (!r) rows.set(key, (r = { key, sess, agent: agent || null, name: name || (agent ? '' : 'claude'), spans: [], marks: [], cur: null, desk: -1 }));
@@ -44,29 +44,29 @@ export function buildTimeline(items, from, to) {
       const ids = new Set();
       for (const s of m.sessions || []) {
         ids.add(s.id);
-        const r = row(s.id, null, s.name); r.desk = s.desk ?? r.desk; ids.add(r.key); if (s.title) r.title = s.title;
+        const r = row(s.id, null, s.name, s.sid); r.desk = s.desk ?? r.desk; ids.add(r.key); if (s.title) r.title = s.title;
         if (!r.cur) open(r, t, s.status === 'work' ? 'think' : s.status === 'wait' ? 'wait' : s.lastPrompt ? 'turn' : 'idle');
         for (const x of s.subs || []) { const sr = row(s.id, x.id, `${x.type}${x.desc ? ' · ' + x.desc : ''}`); if (!sr.cur) open(sr, t, x.last ? OF_TYPE[x.last.type] || 'think' : 'think'); }
       }
       for (const r of rows.values()) if (r.cur && !ids.has(r.agent ? r.key.slice(0, r.key.lastIndexOf('|')) : r.key)) close(r, t);
     } else if (m.k === 'ev' && m.e) {
       const e = m.e, name = m.s?.name || e.name;
-      if (m.s && !e.agent) { const r0 = row(e.sess, null, name); r0.desk = m.s.desk ?? -1; if (m.s.title) r0.title = m.s.title; }
+      if (m.s && !e.agent) { const r0 = row(e.sess, null, name, m.s.sid); r0.desk = m.s.desk ?? -1; if (m.s.title) r0.title = m.s.title; }
       if (e.type === 'substart') { const sr = row(e.sess, e.agent, e.label || ''); open(sr, t, 'think'); continue; }
       if (e.type === 'substop') { const sr = rows.get(`${keyOf(e.sess)}|${e.agent}`); if (sr) { if (e.desc) sr.name = [e.label || sr.name, e.desc].filter(Boolean).join(' · '); close(sr, t); } continue; }
       if (e.agent) { const sr = row(e.sess, e.agent, e.agentType || ''); if (e.type === 'fail') mark(sr, t, 'fail', e.label); else open(sr, t, OF_TYPE[e.type] || 'think', e.label); continue; }
-      const r = row(e.sess, null, name);
+      const r = row(e.sess, null, name, m.s?.sid);
       if (e.type === 'start') { if (!r.cur) open(r, t, 'idle'); mark(r, t, 'start'); }
       else if (e.type === 'end') { close(r, t); mark(r, t, 'end'); }
       else if (e.type === 'fail' || e.type === 'deploy') mark(r, t, e.type, e.label);
       else { if (e.type === 'prompt') mark(r, t, 'prompt', e.label); open(r, t, OF_TYPE[e.type] || 'think', e.label); }
     } else if (m.k === 'stats' && m.s) {
       // a tool finished: back to thinking (only the main agent's tools; subagents report their own)
-      if (m.s.name) nameOf.set(m.s.id, m.s.name);
+      if (m.s.sid) keyMap.set(m.s.id, m.s.sid);
       const r = rows.get(m.post && m.post !== 'main' ? `${keyOf(m.s.id)}|${m.post}` : keyOf(m.s.id));
       if (r?.cur && TOOL.has(r.cur.kind)) open(r, t, 'think');
     } else if (m.k === 'sess' && m.s) {
-      const r = row(m.s.id, null, m.s.name), st = m.s.status, k = r.cur?.kind;
+      const r = row(m.s.id, null, m.s.name, m.s.sid), st = m.s.status, k = r.cur?.kind;
       if (m.s.title) r.title = m.s.title;
       if (st === 'wait' && k !== 'wait') open(r, t, 'wait');
       else if (st === 'work' && (k === 'wait' || k === 'idle' || k === 'turn' || !k)) open(r, t, 'think');

@@ -39,7 +39,12 @@ export async function weekSummary({ replayDir, buildTimeline, days = 7 }) {
     const dirOf = new Map(), max = Object.fromEntries(STAT_KEYS.map((k) => [k, 0]));
     for (const { m } of items) {
       const list = m.k === 'snap' ? m.sessions || [] : m.s ? [m.s] : [];
-      for (const s of list) { if (s.dir) dirOf.set(s.id, s.dir); if (s.name) names.add(s.name); if (s.usage?.cost) costs.set(s.name || s.id, Math.max(costs.get(s.name || s.id) || 0, s.usage.cost)); }
+      for (const s of list) {
+        const key = s.sid || s.id || s.name;
+        if (s.dir) dirOf.set(s.id, s.dir);
+        if (key) names.add(key);
+        if (s.usage?.cost && key) costs.set(key, Math.max(costs.get(key) || 0, s.usage.cost));
+      }
       if (m.stats) for (const k of STAT_KEYS) max[k] = Math.max(max[k], m.stats[k] || 0);
       if (m.k === 'ev' && m.e?.type === 'commit') out.commits++;
       if (m.k === 'ev' && m.e?.type === 'push') out.pushes++;
