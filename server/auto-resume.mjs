@@ -33,7 +33,7 @@ export function createAutoResume({ findClaude, dirOfSlug, prefs, pinDir, spawn, 
       const dir = dirOfSlug?.(to), env = { ...process.env };
       if (dir) env.CLAUDE_CONFIG_DIR = dir; else delete env.CLAUDE_CONFIG_DIR;
       try {
-        const child = spawn(bin.file || bin, ['--resume', s.sid, '-p', prompt()], { cwd: s.cwd && fs.existsSync(s.cwd) ? s.cwd : process.cwd(), env, stdio: 'ignore', detached: true });
+        const child = spawn(bin.file || bin, [...(bin.args || []), '--resume', s.sid, '-p', prompt()], { cwd: s.cwd && fs.existsSync(s.cwd) ? s.cwd : process.cwd(), env, stdio: 'ignore', detached: true });
         child.unref?.();
         log(`${new Date().toISOString()} auto-resume ${s.name || s.sid} on ${to || 'main'} (pid ${child.pid})\n`);
       } catch (e) { log(`${new Date().toISOString()} auto-resume ${s.name || s.sid} failed: ${String(e?.message || e).slice(0, 120)}\n`); }

@@ -20,7 +20,7 @@ import { redact } from './redact.mjs';
 import { normalizeAgentEvent, normalizeTool } from './agent-events.mjs';
 import { readCodexHistory } from './codex-history.mjs';
 import { createAgentHistory } from './agent-history.mjs';
-import { openCodeCommand as findOpenCode } from './cli-command.mjs';
+import { cliCommand, openCodeCommand as findOpenCode } from './cli-command.mjs';
 import { createUndo, EDIT_TOOLS as UNDO_TOOLS } from './undo.mjs';
 import { createVault } from './vault.mjs';
 import { MAIN, SUB, modelsOf, withModels, hasSplit, withSplit } from './models.mjs';
@@ -2146,8 +2146,8 @@ function refreshLogin(dir) {
   const cwd = path.join(DATA_DIR, 'renew');
   try { fs.mkdirSync(cwd, { recursive: true }); } catch { /* the run still goes */ }
   const run = new Promise((resolve) => {
-    const child = execFile(bin.file, ['-p', '--model', 'haiku', '--no-session-persistence', '--strict-mcp-config', '--tools', '', '--settings', '{"disableAllHooks":true}', 'Reply with the single word: ok'],
-      { cwd, env: { ...process.env, CLAUDE_CONFIG_DIR: dir }, timeout: 90_000, maxBuffer: 1 << 20 }, (err) => resolve(!err));
+    const child = execFile(bin.file, [...(bin.args || []), '-p', '--model', 'haiku', '--no-session-persistence', '--strict-mcp-config', '--tools', '', '--settings', '{"disableAllHooks":true}', 'Reply with the single word: ok'],
+      { cwd, env: { ...process.env, CLAUDE_CONFIG_DIR: dir }, timeout: 90_000, maxBuffer: 1 << 20, windowsHide: true }, (err) => resolve(!err));
     child.stdin?.end();   // (-p reads stdin too: nothing comes)
   }).then(async (ok) => { const now = await OS.claudeLogin(dir).catch(() => null); fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} renew login ${accName(dir)} -> ${now?.accessToken && !dead(now) ? 'renewed' : 'failed'}${ok ? '' : ' (its run ended in an error)'}\n`).catch(() => {}); return ok; })
     .finally(() => renewing.delete(dir));
@@ -2267,7 +2267,10 @@ function findZCode() {
 function findClaude() {
   if (claudeBin && fs.existsSync(claudeBin.file)) return claudeBin;
   const home = os.homedir(), exe = process.platform === 'win32' ? 'claude.exe' : 'claude', isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
-  if (process.env.OFFICE_CLAUDE_BIN && isFile(process.env.OFFICE_CLAUDE_BIN)) return (claudeBin = { file: process.env.OFFICE_CLAUDE_BIN, onPath: false });
+  if (process.env.OFFICE_CLAUDE_BIN && isFile(process.env.OFFICE_CLAUDE_BIN)) {
+    const cmd = cliCommand(process.env.OFFICE_CLAUDE_BIN) || { file: process.env.OFFICE_CLAUDE_BIN };
+    return (claudeBin = { ...cmd, onPath: false });
+  }
   // Windows npm installs put only claude.cmd on the PATH; the real exe sits in that folder's node_modules
   const npmExe = (d) => path.join(d, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', exe);
   for (const d of String(process.env.PATH || '').split(path.delimiter)) {
@@ -2310,7 +2313,7 @@ function startLogin(slug) {
   try { fs.rmSync(urlFile, { force: true }); } catch { /* none */ }
   if (process.platform !== 'win32') Object.assign(env, { BROWSER: browserScript(), OFFICE_LOGIN_URL_FILE: urlFile });
   const L = { slug, state: 'waiting', url: '', note: '' };
-  try { L.child = spawn(bin.file, ['auth', 'login', '--claudeai'], { env, stdio: ['pipe', 'pipe', 'pipe'] }); } catch { return { slug, state: 'failed', note: tr('server.account.noCli') }; }
+  try { L.child = spawn(bin.file, [...(bin.args || []), 'auth', 'login', '--claudeai'], { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); } catch { return { slug, state: 'failed', note: tr('server.account.noCli') }; }
   logins.set(slug, L);
   let out = '';
   const seen = (d) => { out = (out + d).slice(-4000); const m = !L.url && /visit:\s*(https:\/\/\S+)/.exec(out); if (m) { L.url = m[1]; pushLogin(L); } };
@@ -3748,8 +3751,8 @@ function setTunnelDomain(host) {
   const step = (state) => { job.state = state; };   // (the phone window asks every 2 s while it goes)
   const fail = (key, vars) => { job.state = 'error'; job.note = tr(key, vars); };
   (async () => {
-    const cmd = await cloudflared();
-    const run = (args, timeout) => new Promise((resolve) => execFile(cmd, args, { timeout, maxBuffer: 4 << 20 }, (err, out, errOut) => resolve({ ok: !err, out: String(out || ''), err: String(errOut || '') })));
+    const rawCmd = await cloudflared(), cmd = cliCommand(rawCmd) || { file: rawCmd };
+    const run = (args, timeout) => new Promise((resolve) => execFile(cmd.file, [...(cmd.args || []), ...args], { timeout, maxBuffer: 4 << 20, windowsHide: true }, (err, out, errOut) => resolve({ ok: !err, out: String(out || ''), err: String(errOut || '') })));
     // 1. Cloudflare's own login (once a Mac): it opens the browser, you pick the domain and allow
     if (!fs.existsSync(path.join(CF_HOME, 'cert.pem'))) {
       const r = await run(['tunnel', 'login'], 5 * 60e3);
@@ -3820,13 +3823,13 @@ async function startTunnel() {
     const named = namedTunnel(), want = named ? `https://${named.host}` : null;   // (the same kind: a fixed address, or a quick one)
     if (saved?.url && saved.port === tunnel.port && saved.pid > 1 && alive(saved.pid) && (await isCloudflared(saved.pid)) && (want ? saved.url === want : /trycloudflare/.test(saved.url))) { tunnelUp(saved.pid, saved.url); return; }
     await killStaleTunnel();
-    const cmd = await cloudflared();
+    const rawCmd = await cloudflared(), cmd = cliCommand(rawCmd) || { file: rawCmd };
     if (gen !== tunnel.gen || !prefs.get('tunnel')) return;
     tunnel.state = 'starting';
     fs.writeFileSync(TUNNEL_LOG, '');
     const out = fs.openSync(TUNNEL_LOG, 'a');
     const args = named ? ['tunnel', '--no-autoupdate', 'run', '--url', `http://127.0.0.1:${tunnel.port}`, '--credentials-file', named.cred, named.id] : ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${tunnel.port}`];
-    const proc = spawn(cmd, args, { stdio: ['ignore', out, out], detached: true, windowsHide: true });
+    const proc = spawn(cmd.file, [...(cmd.args || []), ...args], { stdio: ['ignore', out, out], detached: true, windowsHide: true });
     fs.closeSync(out); proc.unref();
     proc.on('error', (err) => { tunnel.error = String(err.message || err).slice(0, 200); });
     try { fs.writeFileSync(TUNNEL_PID, String(proc.pid)); } catch { /* read-only data */ }

@@ -120,19 +120,19 @@ export function createTasks({ dataDir, claude, codex = () => null, opencode = ()
     if (t.stopped) { end(t); return; }
     let keeps = false;
     if (t.from?.sid) {
-      const row = (await bg.list(t.bin.file, t.env).catch(() => [])).find((r) => r.sessionId === t.from.sid);
+      const row = (await bg.list(t.bin, t.env).catch(() => [])).find((r) => r.sessionId === t.from.sid);
       // (resting: stopped first, or a second one would be a copy; at work, someone on the Mac: never stopped, a copy it is)
-      if (row?.id) { keeps = true; if (row.pid && row.state !== 'working' && row.status !== 'busy') await bg.stop(t.bin.file, row.id, t.env).catch(() => false); }
+      if (row?.id) { keeps = true; if (row.pid && row.state !== 'working' && row.status !== 'busy') await bg.stop(t.bin, row.id, t.env).catch(() => false); }
     }
     const args = ['--bg', ...(t.model ? ['--model', t.model] : []), ...(t.from?.sid ? ['--resume', t.from.sid] : []),
       ...(keeps ? [] : ['--settings', bg.settings(), ...(t.system ? ['--append-system-prompt', t.system] : [])]), '--', t.prompt];   // (--: words that start with "-" stay words)
-    const r = await bg.run(t.bin.file, args, { cwd: t.dir, env: t.env, timeout: 150_000 });   // (a first start of its service may take a while)
+    const r = await bg.run(t.bin, args, { cwd: t.dir, env: t.env, timeout: 150_000 });   // (a first start of its service may take a while)
     const got = r.code === 0 && parseBackgrounded(r.out);
     if (!got) { fall(bgRefusal(`${r.out}\n${r.err}`)); return; }
     t.job = got.id; t.copy = got.copy;
     const told = binds.get(t.job); if (told) { t.sid = told.sid; t.inbox = told.inbox || t.inbox; t.hooked = true; binds.delete(t.job); }
     onBg?.(t, 'started');
-    if (t.stopped) { await bg.stop(t.bin.file, t.job, t.env).catch(() => false); end(t); return; }
+    if (t.stopped) { await bg.stop(t.bin, t.job, t.env).catch(() => false); end(t); return; }
     watch();
   }
   // background sessions, looked at while one runs: its session id, waiting for you, done, failed or stopped on the Mac
@@ -145,7 +145,7 @@ export function createTasks({ dataDir, claude, codex = () => null, opencode = ()
     try {
       const byAcct = new Map(); for (const t of mine) { const k = t.env.CLAUDE_CONFIG_DIR || ''; if (!byAcct.has(k)) byAcct.set(k, []); byAcct.get(k).push(t); }
       for (const list of byAcct.values()) {
-        const rows = await bg.list(list[0].bin.file, list[0].env).catch(() => null); if (!rows) continue;
+        const rows = await bg.list(list[0].bin, list[0].env).catch(() => null); if (!rows) continue;
         for (const t of list) {
           if (t.ended) continue;
           const row = rows.find((x) => x.id === t.job);
@@ -164,7 +164,7 @@ export function createTasks({ dataDir, claude, codex = () => null, opencode = ()
   function end(t) {
     if (t.ended) return; t.ended = true;
     running.delete(t.id);
-    if (t.mode === 'bg' && t.job && t.stopAfter && !t.stopped) bg.stop(t.bin.file, t.job, t.env).catch(() => false);
+    if (t.mode === 'bg' && t.job && t.stopAfter && !t.stopped) bg.stop(t.bin, t.job, t.env).catch(() => false);
     onDone?.(t);
   }
   /** A session the office started told it which it is (its SessionStart hook): a background one by its short id, a `-p`
@@ -189,7 +189,7 @@ export function createTasks({ dataDir, claude, codex = () => null, opencode = ()
     const t = running.get(id); if (!t) return false;
     t.stopped = true;   // (on purpose: its card says stopped, not failed)
     if (t.cancel) { t.cancel().catch(() => { stopProcess(t.proc); end(t); }); return true; }
-    if (t.mode === 'bg') { if (t.job) bg.stop(t.bin.file, t.job, t.env).catch(() => false).then(() => end(t)); return true; }   // (not started yet: stopped as it starts)
+    if (t.mode === 'bg') { if (t.job) bg.stop(t.bin, t.job, t.env).catch(() => false).then(() => end(t)); return true; }   // (not started yet: stopped as it starts)
     stopProcess(t.proc);
     return true;
   }

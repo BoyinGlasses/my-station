@@ -8,15 +8,18 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { cliCommand } from './cli-command.mjs';
 
 const run = (cmd, args, cwd, timeout = 5000) => new Promise((res) => {
-  execFile(cmd, args, { cwd, timeout, maxBuffer: 4 << 20, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } }, (err, out) => res(err ? null : String(out)));
+  execFile(cmd, args, { cwd, timeout, maxBuffer: 4 << 20, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }, windowsHide: true }, (err, out) => res(err ? null : String(out)));
 });
 // gh: GH_PATH, the usual install places, then anywhere on PATH (gh.exe on Windows)
 const EXE = process.platform === 'win32' ? 'gh.exe' : 'gh';
-const GH = [process.env.GH_PATH, path.join(os.homedir(), '.local/bin/gh'), '/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh',
+const GH_RAW = [process.env.GH_PATH, path.join(os.homedir(), '.local/bin/gh'), '/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh',
   ...(process.platform === 'win32' ? [path.join(process.env.ProgramFiles || 'C:\\Program Files', 'GitHub CLI', EXE)] : []),
   ...String(process.env.PATH || '').split(path.delimiter).filter(Boolean).map((d) => path.join(d, EXE))].find((p) => p && fs.existsSync(p)) || null;
+const GH = GH_RAW ? cliCommand(GH_RAW) || { file: GH_RAW } : null;
+const runGh = (args, cwd, timeout = 15000) => run(GH.file, [...(GH.args || []), ...args], cwd, timeout);
 const CI_ON = process.env.OFFICE_CI !== '0';
 
 /**
@@ -73,7 +76,7 @@ export function createGit({ onRepo, onCommit, onPush, onCi, onRelease = () => {}
     if (!CI_ON || !GH) return;
     for (const r of [...repos.values()]) {
       if (!r.branch) continue;
-      const out = await run(GH, ['run', 'list', '--limit', '10', '--branch', r.branch, '--json', 'status,conclusion,workflowName,url,event'], r.root, 15000);
+      const out = await runGh(['run', 'list', '--limit', '10', '--branch', r.branch, '--json', 'status,conclusion,workflowName,url,event'], r.root, 15000);
       if (out == null) continue;   // not a GitHub repository, offline, or gh not logged in
       // the checks of the code (runs started by a push or a pull request), not a scheduled job that happens to be newer
       let runs; try { runs = JSON.parse(out); } catch { continue; }
@@ -84,7 +87,7 @@ export function createGit({ onRepo, onCommit, onPush, onCi, onRelease = () => {}
       Object.assign(r, { ci: state, ciName: last?.workflowName || '', ciUrl: last?.url || '' });
       if (was !== state) { onRepo(r); if (state === 'red' || (was === 'red' && state === 'green')) onCi(r, was); }
       // a release published on GitHub (its tag may not be here yet): the newest one, once it is newer than the last seen
-      const rel = await run(GH, ['release', 'list', '--limit', '5', '--json', 'tagName,isDraft'], r.root, 15000);
+      const rel = await runGh(['release', 'list', '--limit', '5', '--json', 'tagName,isDraft'], r.root, 15000);
       let tag = ''; try { tag = JSON.parse(rel || '[]').find((x) => !x.isDraft)?.tagName || ''; } catch { /* not JSON */ }   // (a draft is not out yet)
       if (r.ghRelease !== undefined && tag && tag !== r.ghRelease) released(r, tag);
       if (rel != null) r.ghRelease = tag;

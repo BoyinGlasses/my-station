@@ -58,7 +58,7 @@ export function createRewriter({ claude, env, dir, perHour = 20, timeout = 45_00
       return await new Promise((resolve) => {
         let out = '', err = '', done = false, proc, timer = 0;
         const finish = (r) => { if (done) return; done = true; clearTimeout(timer); resolve(r); };
-        try { proc = spawn(bin.file, args, { cwd: fs.existsSync(dir) ? dir : undefined, env: e, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true }); }
+        try { proc = spawn(bin.file, [...(bin.args || []), ...args], { cwd: fs.existsSync(dir) ? dir : undefined, env: e, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true }); }
         catch { finish({ ok: false, code: 'noClaude' }); return; }
         timer = setTimeout(() => {
           try { if (process.platform === 'win32') proc.kill(); else process.kill(-proc.pid, 'SIGTERM'); } catch { try { proc.kill(); } catch { /* gone */ } }

@@ -75,18 +75,19 @@ export function printSettings({ port, task, win = false, send = '' }) {
     stop(bin, id, env) }. The probe is kept per binary (and its date), so an update is looked at again. */
 export function createBg() {
   const probes = new Map();   // file + mtime -> { promise, value (once known) }
-  const run = (file, args, { cwd, env, timeout = 30_000 } = {}) => new Promise((resolve) => {
-    execFile(file, args, { cwd, env, timeout, maxBuffer: 4_000_000, windowsHide: true }, (err, stdout, stderr) =>
+  const run = (bin, args, { cwd, env, timeout = 30_000 } = {}) => new Promise((resolve) => {
+    const file = typeof bin === 'string' ? bin : bin.file, pre = typeof bin === 'string' ? [] : (bin.args || []);
+    execFile(file, [...pre, ...args], { cwd, env, timeout, maxBuffer: 4_000_000, windowsHide: true }, (err, stdout, stderr) =>
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, out: String(stdout || ''), err: String(stderr || '') }));
   });
-  const keyOf = (bin) => { let k = bin.file; try { k += `:${fs.statSync(bin.file).mtimeMs}`; } catch { /* gone: looked at again */ } return k; };
+  const keyOf = (bin) => { const target = bin.args?.[0] || bin.file; let k = `${bin.file}:${target}`; try { k += `:${fs.statSync(target).mtimeMs}`; } catch { /* gone: looked at again */ } return k; };
   function probe(bin) {
     if (!bin?.file) return Promise.resolve({ ok: false, version: null });
     const key = keyOf(bin);
     if (!probes.has(key)) {
       if (probes.size > 8) probes.clear();
       const p = { value: null };
-      p.promise = Promise.all([run(bin.file, ['--help'], { timeout: 15_000 }), run(bin.file, ['--version'], { timeout: 15_000 })])
+      p.promise = Promise.all([run(bin, ['--help'], { timeout: 15_000 }), run(bin, ['--version'], { timeout: 15_000 })])
         .then(([h, v]) => (p.value = { ok: h.code === 0 && hasBg(h.out), version: versionOf(v.out) }));
       probes.set(key, p);
     }
@@ -97,7 +98,7 @@ export function createBg() {
     /** what it said, once looked at (null until then) */
     known: (bin) => (bin?.file ? probes.get(keyOf(bin))?.value || null : null),
     run,
-    list: async (file, env) => parseAgents((await run(file, ['agents', '--json', '--all'], { env, timeout: 20_000 })).out),
-    stop: async (file, id, env) => (await run(file, ['stop', id], { env, timeout: 20_000 })).code === 0,
+    list: async (bin, env) => parseAgents((await run(bin, ['agents', '--json', '--all'], { env, timeout: 20_000 })).out),
+    stop: async (bin, id, env) => (await run(bin, ['stop', id], { env, timeout: 20_000 })).code === 0,
   };
 }
