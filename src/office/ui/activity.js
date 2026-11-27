@@ -15,6 +15,7 @@ import { imageUrl, openImage } from './image-view.js';
 import { renderHome } from './phone-home.js';
 import { t as tr, num } from '../../i18n/index.js';
 import { safeHttpUrl } from '../../shared/safe-url.js';
+import { baseName } from '../../shared/path-label.js';
 
 let feedFilter = 'all';
 let query = '';
@@ -184,7 +185,7 @@ function renderRail() {
     const nk = dn(s) + '|' + (s.dir || '') + '|' + (s.origin || '') + (s.link ? '|rc' : '');
     if (r.nameKey !== nk) {
       r.nameKey = nk; r.name.textContent = dn(s); r.top.querySelector('.ri-rc')?.remove(); r.top.querySelector('.ri-proj')?.remove();
-      const proj = String(s.dir || '').split('/').filter(Boolean).pop();
+      const proj = baseName(s.dir);
       if (proj && proj !== dn(s)) { const pj = el('span', 'ri-proj', proj); pj.title = s.origin ? tr('activity.runsIn', { dir: s.dir, origin: s.origin }) : `${s.dir}`; r.name.after(pj); }
       if (s.link) { const rc = el('span', 'ri-rc'); rc.title = tr('activity.remoteOn'); rc.append(icon('phone')); r.top.append(rc); }
     }

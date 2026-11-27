@@ -15,6 +15,7 @@ import { liveWindows } from '../ui/mac-drawer.js';
 import { napOn } from '../life/nap.js';
 import { sfx } from '../audio/sfx.js';
 import { t as tr } from '../../i18n/index.js';
+import { projectOf } from '../../shared/path-label.js';
 
 /* - 8:00 to 17:45, up and down by the lift. Her desk stands in the director's office, along the glass on the meeting
      room's side: the screen faces the room (a little spreadsheet of what the open sessions have cost, by project), a
@@ -29,7 +30,7 @@ const minutes = () => { const d = officeNow(); return d.getHours() * 60 + d.getM
 const today = () => officeNow().toDateString();
 function say(w, key, vars, ms = 4500) { const text = tr(key, vars); w.say('idle', text); setTimeout(() => { if (w.lastSay?.text === text) w.hush(); }, ms); }
 const usd = (v) => `$${v >= 100 ? Math.round(v) : v.toFixed(2)}`;
-const projOf = (s) => s?.git?.repo || String(s?.dir || '').split('/').filter(Boolean).pop() || tr('activity.live.otherProject');
+const projOf = (s) => projectOf(s, tr('activity.live.otherProject'));
 
 // a moment the office is busy with something together (people/rounds.js waits for these too)
 export function busyNow() {

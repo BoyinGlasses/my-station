@@ -17,12 +17,12 @@ import { closePlace } from '../interact/place-cards.js';
 import { exitFp, fp } from '../interact/first-person.js';
 import { t as tr } from '../../i18n/index.js';
 import { modelFamily } from '../../shared/model-name.js';
+import { fold, projectOf } from '../../shared/path-label.js';
 
 export let lite = false;
 let filter = 'all', query = '', head = null, tabs = null, permHost = null, listEl = null, emptyEl = null;
 const GROUPS = ['wait', 'work', 'rest'];
-const fold = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase();
-export const project = (s) => s.git?.repo || String(s.dir || '').split('/').filter(Boolean).pop() || '';
+export const project = (s) => projectOf(s);
 export const statusOf = (s) => (s.status === 'wait' ? 'wait' : s.status === 'rest' ? 'rest' : 'work');
 
 // what it is doing now, in words of the work (not of the office: no lift, no shop)

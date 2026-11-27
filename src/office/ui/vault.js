@@ -11,16 +11,16 @@ import { closeBurn, drB } from './burn.js';
 import { toast } from './activity.js';
 import { t as tr, locale } from '../../i18n/index.js';
 import { quoteShellArg } from '../../shared/safe-url.js';
+import { baseName, fold } from '../../shared/path-label.js';
 
 export let drV;
 let q = '', reqSeq = 0, typeT = 0, open = null, tab = 'list';   // (open: the conversation being read, or null for the list; tab: 'list' | 'report')
 const tq = () => (TOKEN ? `&k=${encodeURIComponent(TOKEN)}` : '');
 const day = (ms) => new Date(ms).toLocaleDateString(locale(), { day: 'numeric', month: 'short', year: new Date(ms).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
 const when = (ms) => (ms ? `${day(ms)} ${hhmm(ms)}` : '');
-const project = (cwd) => String(cwd || '').split(/[\\/]/).filter(Boolean).pop() || '';
+const project = (cwd) => baseName(cwd);
 
 /* ---------- the demo's few: made-up conversations from its projects, one of them already gone from Claude Code ---------- */
-const fold = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase();
 function demoRecs() {
   const now = Date.now(), H = 3600e3, D = 24 * H;
   return [

@@ -31,6 +31,7 @@ import { coach, numberTasks } from '../../shared/prompt-coach.js';
 import { quickChoices } from '../../shared/quick-choices.js';
 import { t as tr, lang, locale } from '../../i18n/index.js';
 import { safeHttpUrl } from '../../shared/safe-url.js';
+import { folderOf as shortFolder } from '../../shared/path-label.js';
 
 let root, body, typingEl, pinEl, newBtn, input, bar, stickersEl, membersEl, mentionEl, moreEl, replyEl, headSub, headAv, toEl, pickEl, quickEl, attachEl, convEl;
 let replyTo = null, readTo = null, stickTab = 'sticker';   // the message you answer; the last one read when the window shut; the panel's tab
@@ -680,7 +681,7 @@ async function openPick() {
   const list = r?.sessions || [];
   if (!list.length) items.push(el('p', 'zc-to-note', r ? tr('chat.to.none') : tr('drawer.unreachable')));
   for (const s of list) {
-    const folder = s.dir.split('/').slice(-2).join('/'), st = tr(s.status === 'rest' ? 'chat.memberRest' : s.status === 'wait' ? 'chat.memberWait' : 'chat.memberWork');
+    const folder = shortFolder(s.dir), st = tr(s.status === 'rest' ? 'chat.memberRest' : s.status === 'wait' ? 'chat.memberWait' : 'chat.memberWork');
     const cw = s.status === 'work' ? '' : cacheWords(s.cache, 'chat').text;   // (at work it is warm anyway)
     const o = opt(avatar(faceOf(s.id, s.name), 30), s.name, `📁 ${folder} · ${AGENT_NAME[s.agent] || AGENT_NAME.claude} · ${st}${cw ? ` · ${cw}` : ''}`, target?.sid === s.sid, () => { setTarget({ id: s.id, sid: s.sid, agent: s.agent, name: s.name, folder }); input.focus(); }, r && !r.allowed);
     o.dataset.sid = s.sid;
@@ -692,7 +693,7 @@ async function openPick() {
   if (r?.projects?.length) {
     items.push(el('small', 'zc-to-h', tr('chat.to.newTitle')));
     for (const p of r.projects) for (const a of r.agents || []) {
-      const folder = p.dir.split('/').slice(-2).join('/');
+      const folder = shortFolder(p.dir);
       const o = opt(el('span', 'zc-to-group zc-to-proj', '📁'), `${p.name} · ${a.name}`, p.dir, target?.dir === p.dir && target.agent === a.id, () => { setTarget({ dir: p.dir, agent: a.id, name: `${p.name} · ${a.name}`, folder, fresh: true }); input.focus(); }, r && !r.allowed);
       o.dataset.dir = p.dir; o.append(el('i', 'zc-to-pill', tr('chat.to.newPill'))); items.push(o);
     }
@@ -777,7 +778,7 @@ async function notifyNudge() {
   if (st === 'off' || st === 'install') toast(tr(st === 'off' ? 'chat.to.nudgeOn' : 'chat.to.nudgeInstall'), 9000);
 }
 // a session's project folder, short (its last two parts), and what it's doing now
-const folderOf = (s) => { const d = String(s?.dir || '').replace(/\/+$/, ''); return d.split('/').slice(-2).join('/') || d; };
+const folderOf = (s) => shortFolder(s?.dir);
 const statusOf = (s) => tr(s.status === 'rest' ? 'chat.memberRest' : s.status === 'wait' ? 'chat.memberWait' : 'chat.memberWork');
 // @: every conversation (not only those in the office now), newest first, with its folder and what it's doing; one with
 // Remote Control also gets "Giao việc ↗", which opens it in the Claude app (the real way to give it work)

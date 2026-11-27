@@ -3,11 +3,12 @@
 // prompt cache. Enough not to open the office for it.
 import { t as tr, num } from '../i18n/index.js';
 import { modelLong } from '../shared/model-name.js';
+import { projectOf as projectOfPath } from '../shared/path-label.js';
 import { el } from './fmt.js';
 
 const clip = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
 /** the project a session is in: its git repository, else its folder's name */
-export const projectOf = (s) => s.git?.repo || String(s.dir || '').split('/').filter(Boolean).pop() || '';
+export const projectOf = (s) => projectOfPath(s);
 function dur(ms) {
   const m = Math.max(1, Math.round(ms / 60e3)), h = Math.floor(m / 60), d = Math.floor(h / 24);
   return d ? tr('time.dayHour', { d, h: h % 24 }) : h ? tr('time.hourMin', { h, m: m % 60 }) : tr('time.min', { n: m });

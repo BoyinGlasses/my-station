@@ -12,6 +12,7 @@ import { TOKEN } from '../net/live.js';
 import { DEMO, connect, startDemo } from '../demo/demo.js';
 import { dayKey, rangeOf, renderReplay, seekTo, startReplay } from './replay.js';
 import { t as tr } from '../../i18n/index.js';
+import { baseName } from '../../shared/path-label.js';
 
 /* ---------- timeline: one lane per session (subagents indented), what it did and when, and how long it waited for
    you. Data from /api/timeline (built from the replay log); in the demo, from the events on screen. ---------- */
@@ -73,7 +74,7 @@ function renderTimeline() {
     const line = el('div', 'tl-row' + (r.agent ? ' tl-row--sub' : ''));
     const name = el('button', 'tl-name'); name.type = 'button';
     const s = sessions.get(r.sess), dot = el('i'); dot.style.background = r.agent ? 'var(--blue)' : s ? colorOf(s) : '#5E687B';
-    const proj = !r.agent && s?.dir ? String(s.dir).split('/').filter(Boolean).pop() : '';
+    const proj = !r.agent && s?.dir ? baseName(s.dir) : '';
     const tt = r.totals, note = r.agent ? fmtSpan(tt.work) : `${proj ? proj + ' · ' : ''}${tr('timeline.rowWork', { time: fmtSpan(tt.work) })}${tt.wait > 60e3 ? ` · ${tr('timeline.rowWait', { time: fmtSpan(tt.wait) })}` : ''}`;
     name.append(dot, el('b', null, (!r.agent && (dn(s) || r.title)) || rowName(r)), el('small', null, note));
     name.title = s ? tr('timeline.openSession') : tr('timeline.sessionClosed');
