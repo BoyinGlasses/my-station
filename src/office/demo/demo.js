@@ -20,7 +20,7 @@ import { setTenure } from '../people/farewell.js';
 import { logLine } from './demo-log.js';
 import { t as tr } from '../../i18n/index.js';
 
-export let DEMO;
+export let DEMO = STATIC || (typeof location !== 'undefined' && new URLSearchParams(location.search).has('demo'));
 // The fictional projects. Paths, search terms and commands are the same in every language; what people write (prompts,
 // a command's description, what needs approval) comes from the demo dictionary, read when the demo starts.
 function demoProjects() {
@@ -149,7 +149,7 @@ export function demoMac() {
     ide: { name: 'Claude Code', mem: 2.1 * GBb, windows: 2, ui: { mem: 0.9 * GBb, n: 6 }, ts: { mem: 0, n: 0 }, ext: { mem: 0.6 * GBb, n: 2 }, other: 0.6 * GBb, chats: claude.length, idleChats: claude.filter((c) => !c.busy).length },
     held: 15.2 * GBb, rules: { sessionIdle: 2700, devIdle: 7200, pressure: 'warn' }, auto: demoAuto,
     trend: Array.from({ length: 31 }, (_, i) => ({ t: Date.now() - (30 - i) * 60e3, used: (11.4 + Math.sin(i / 4) * 0.5 + i * 0.04) * GBb, total: 16 * GBb, swap: (2.2 + i * 0.03) * GBb })),
-    tips, cleanups: [{ id: 'claude-tmp', title: M('tmpTitle'), detail: M('tmpCleanup'), size: 8.4 * GBb }, { id: 'next-cache', title: M('nextTitle'), detail: M('nextDetail'), size: 0.7 * GBb }, { id: 'npm-cache', title: M('npmTitle'), detail: M('npmDetail'), size: 0.3 * GBb }], cleanupsAt: Date.now() };
+    tips, cleanups: [{ id: 'claude-tmp', title: M('tmpTitle'), note: M('tmpCleanup'), size: 8.4 * GBb }, { id: 'next-cache', title: M('nextTitle'), note: M('nextDetail'), size: 0.7 * GBb }, { id: 'npm-cache', title: M('npmTitle'), note: M('npmDetail'), size: 0.3 * GBb }], cleanupsAt: Date.now() };
 }
 // What eats the plan in the demo (ui/burn.js): a week of made-up sums for the fictional projects, summed as the server
 // sums its own (src/shared/burn.js), on a plan whose week is 46 % used.
@@ -292,7 +292,7 @@ function ask() {
     while (!stop.signal.aborted) {
       if (document.hidden) await new Promise((ok) => document.addEventListener('visibilitychange', ok, { once: true }));   // (a phone in a pocket asks nothing)
       try {
-        const r = await fetch(`/api/live?since=${since}`, { cache: 'no-store', signal: stop.signal });
+        const r = await fetch(`/api/live?since=${since}${TOKEN ? `&k=${encodeURIComponent(TOKEN)}` : ''}`, { cache: 'no-store', signal: stop.signal });
         if (r.status === 401) { location.reload(); return; }   // (signed out: back to the PIN)
         const j = await r.json();
         fails = 0; setConn(true); since = j.seq;

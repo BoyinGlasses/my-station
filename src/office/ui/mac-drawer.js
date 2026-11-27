@@ -266,7 +266,7 @@ export function acctSwitched(d) {
    server: acctLogin) with a way to open the page again or copy its link (for a private window), a box for the code
    the page may show, and a retry. The account appears in the card as soon as it has logged in (renderLimits). */
 const adding = { step: 'idle', name: '', data: null, login: null, note: '' };
-const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()).catch(() => ({ ok: false }));
+const post = (url, body) => fetch(`${url}${TOKEN ? `${url.includes('?') ? '&' : '?'}k=${encodeURIComponent(TOKEN)}` : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()).catch(() => ({ ok: false }));
 function copyButton(text, label = tr('mac.add.copy')) {
   const b = el('button', 'pa-copy', label); b.type = 'button';
   b.addEventListener('click', () => navigator.clipboard?.writeText(text).then(() => { b.textContent = tr('mac.add.copied'); setTimeout(() => { b.textContent = label; }, 1600); }).catch(() => {}));

@@ -2,10 +2,12 @@
 // its subagents run on, always that one or only when Claude doesn't pick, and the note asking Claude to split big tasks.
 // Read from the server each time Settings opens; on the Mac only (it writes Claude Code's own settings).
 import { $, STATIC } from '../core/env.js';
+import { TOKEN } from '../net/live.js';
 import { toast } from './activity.js';
 import { t as tr } from '../../i18n/index.js';
 
 const DEMO = STATIC || new URLSearchParams(location.search).has('demo');
+const tq = () => (TOKEN ? `?k=${encodeURIComponent(TOKEN)}` : '');
 let conf = null;
 function draw() {
   const box = $('st-models'); if (!box || !conf) return;
@@ -22,11 +24,11 @@ function draw() {
 }
 async function load() {
   if (DEMO) return;
-  const r = await fetch('/api/models').then((x) => x.json()).catch(() => null);
+  const r = await fetch(`/api/models${tq()}`).then((x) => x.json()).catch(() => null);
   if (r?.ok) { conf = r; draw(); }   // (a phone is refused: the section stays hidden there)
 }
 async function save(change) {
-  const r = await fetch('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change) }).then((x) => x.json()).catch(() => null);
+  const r = await fetch(`/api/models${tq()}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change) }).then((x) => x.json()).catch(() => null);
   if (!r?.ok) { toast(r?.message || tr('drawer.unreachable'), 6000); return; }
   conf = r; draw(); toast(tr('settings.models.saved'), 5000);
 }

@@ -141,7 +141,7 @@ function render() {
   if (d.range === '7d') out.push(sec(tr('burn.perDay'), days(d, colors)));
   // by project, by session (the 40 that cost most, the rest in one line so it still adds up)
   const projects = el('ol', 'bn-list');
-  for (const p of d.projects.slice(0, 12)) projects.append(row('', p.name || tr('burn.noProject'), p.share, usd(p.usd), tr('burn.sub.sessions', { n: p.sessions }), p.dir || ''));
+  for (const p of d.projects.slice(0, 12)) projects.append(row('', p.name || tr('burn.noProject'), p.share, usd(p.usd), tr('burn.sub.sessions', { n: p.sessions }), p.dir || p.cwd || ''));
   out.push(sec(tr('burn.projects'), projects));
   const sessions = el('ol', 'bn-list');
   for (const s of d.sessions.slice(0, 15)) {
