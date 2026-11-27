@@ -15,6 +15,10 @@ test-results/
 test-results-*/
 .next-*/
 playwright-report/
+blob-report/
+all-blob/
+merged.json
+docs/debug/
 
 # the online demo build (scripts/build-demo.mjs)
 /.demo-build/
