@@ -30,6 +30,7 @@ import { REACTIONS, byId, chat, chatPoll, chatSend, chatSendPhoto, onChat, peopl
 import { coach, numberTasks } from '../../shared/prompt-coach.js';
 import { quickChoices } from '../../shared/quick-choices.js';
 import { t as tr, lang, locale } from '../../i18n/index.js';
+import { safeHttpUrl } from '../../shared/safe-url.js';
 
 let root, body, typingEl, pinEl, newBtn, input, bar, stickersEl, membersEl, mentionEl, moreEl, replyEl, headSub, headAv, toEl, pickEl, quickEl, attachEl, convEl;
 let replyTo = null, readTo = null, stickTab = 'sticker';   // the message you answer; the last one read when the window shut; the panel's tab
@@ -796,7 +797,8 @@ function mentions() {
     task.addEventListener('pointerdown', (e) => e.preventDefault());
     task.addEventListener('click', () => { mentionEl.hidden = true; openTaskSheet(root, { to: { id: s.id }, text: input.value.replace(/@[^\s@]*$/, '').trim() }); });
     row.append(b, task);
-    if (s.link) { const go = el('a', 'zc-men-go', tr('chat.giveWork')); go.href = s.link; go.target = '_blank'; go.rel = 'noopener'; row.append(go); }
+    const slink = safeHttpUrl(s.link);
+    if (slink) { const go = el('a', 'zc-men-go', tr('chat.giveWork')); go.href = slink; go.target = '_blank'; go.rel = 'noopener noreferrer'; row.append(go); }
     return row;
   }));
   mentionEl.hidden = false;
@@ -841,7 +843,8 @@ function drawMembers() {
   const add = (p, note, link) => {
     const r = el('div', 'zc-mem'), t = el('span', 'zc-mem-t'); t.textContent = p.name; r.append(avatar(p, 40), t, el('small', null, note));
     // a session with Remote Control: give it work in the Claude app (the real way to prompt it from here)
-    if (link) { const a = el('a', 'zc-mem-go', tr('chat.giveWork')); a.href = link; a.target = '_blank'; a.rel = 'noopener'; r.append(a); }
+    const slink = safeHttpUrl(link);
+    if (slink) { const a = el('a', 'zc-mem-go', tr('chat.giveWork')); a.href = slink; a.target = '_blank'; a.rel = 'noopener noreferrer'; r.append(a); }
     rows.push(r);
   };
   add({ ...meP(), name: `${tr('chat.boss')} (${tr('chat.you')})` }, tr('chat.memberYou'));

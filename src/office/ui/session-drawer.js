@@ -18,6 +18,7 @@ import { renderCompose, setupCompose } from './session-compose.js';
 import { openUndo } from './undo-view.js';
 import { t as tr, locale } from '../../i18n/index.js';
 import { modelLong } from '../../shared/model-name.js';
+import { safeHttpUrl } from '../../shared/safe-url.js';
 
 /* ---------- session drawer ---------- */
 export let tab = 'chat';
@@ -85,15 +86,16 @@ function renderActions() {
     u.addEventListener('click', () => { const back = tab; setTab('undo'); openUndo(s, () => setTab(back)); }); box.append(u);
   }
   box.append(...acctActions(s, renderActions));
-  if (s.link) {
-    const a = el('a', 'btn btn--primary btn--sm', tr('drawer.openOnClaude')); a.href = s.link; a.target = '_blank'; a.rel = 'noopener';
+  const link = safeHttpUrl(s.link);
+  if (link) {
+    const a = el('a', 'btn btn--primary btn--sm', tr('drawer.openOnClaude')); a.href = link; a.target = '_blank'; a.rel = 'noopener noreferrer';
     box.append(a);
     // on the Mac: a QR code of the session's Remote Control link, to carry on from the phone (the Claude app opens it)
     if (state.isLocal && window.QRCode) {
       const q = el('button', 'btn btn--sm'); q.type = 'button'; q.title = tr('drawer.qrTitle'); q.textContent = tr('drawer.qr'); q.setAttribute('aria-pressed', String(qrFor === s.id));
       q.addEventListener('click', () => { qrFor = qrFor === s.id ? null : s.id; renderActions(); });
       box.append(q);
-      if (qrFor === s.id) { const code = el('div', 'qr dr-qr'); try { new window.QRCode(code, { text: s.link, width: 180, height: 180 }); box.append(code, el('p', 'dr-note', tr('drawer.qrNote'))); } catch { /* no QR */ } }
+      if (qrFor === s.id) { const code = el('div', 'qr dr-qr'); try { new window.QRCode(code, { text: link, width: 180, height: 180 }); box.append(code, el('p', 'dr-note', tr('drawer.qrNote'))); } catch { /* no QR */ } }
     }
     if (qrFor !== s.id) box.append(el('p', 'dr-note', tr('drawer.openOnClaudeNote')));
   }

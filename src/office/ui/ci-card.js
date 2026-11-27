@@ -6,6 +6,7 @@ import { TOKEN } from '../net/live.js';
 import { sessions, dn } from '../people/workers.js';
 import { toast } from './activity.js';
 import { t as tr } from '../../i18n/index.js';
+import { safeHttpUrl } from '../../shared/safe-url.js';
 
 const DEMO = STATIC || new URLSearchParams(location.search).has('demo');
 const tq = () => (TOKEN ? `?k=${encodeURIComponent(TOKEN)}` : '');
@@ -17,8 +18,9 @@ export function ciCard(m, redraw) {
   const box = el('div', `zc-ci is-${C.state || 'red'}`), head = el('div', 'zc-ci-h');
   head.append(el('i', 'zc-ci-ic', red ? '🔴' : C.state === 'green' ? '🟢' : '⚪'), el('b', null, tr('chat.ci.title')));
   box.append(head, el('p', 'zc-ci-t', tr('chat.ci.line', { wf: short(C.wf || 'CI', 40), repo: C.repo || '', branch: C.branch || '' })));
-  if (C.url) {
-    const a = el('a', 'zc-ci-link', tr('chat.ci.open')); a.href = C.url; a.target = '_blank'; a.rel = 'noopener';
+  const url = safeHttpUrl(C.url);
+  if (url) {
+    const a = el('a', 'zc-ci-link', tr('chat.ci.open')); a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.addEventListener('click', (e) => e.stopPropagation());   // (not the bubble's own tap, which opens its reactions)
     box.append(a);
   }

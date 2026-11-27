@@ -21,6 +21,7 @@ import { fp } from './first-person.js';
 import { sfx } from '../audio/sfx.js';
 import { focusTarget } from '../core/loop.js';
 import { t as tr, num, locale } from '../../i18n/index.js';
+import { safeHttpUrl } from '../../shared/safe-url.js';
 
 let plc;
 export const plcState = { id: null, prop: null };
@@ -87,7 +88,8 @@ function placeContent(id) {
         for (const g of repos.values()) {
           const [ic, tone, ciText] = CI[g.ci] || ['file', null, ''];
           const meta = [g.dirty ? tr('places.deploy.dirty', { n: g.dirty }) : tr('places.deploy.clean'), g.ahead ? tr('places.deploy.ahead', { n: g.ahead }) : '', ciText ? `${ciText}${g.ciName ? ` · ${g.ciName}` : ''}` : ''].filter(Boolean).join(' · ');
-          box.append(plRow({ ic, tone, title: state.streamer ? tr('places.deploy.aRepo') : `${g.repo} · ${g.branch}`, meta, onClick: g.ciUrl && !state.streamer ? () => window.open(g.ciUrl, '_blank', 'noopener') : null }));
+          const ciUrl = safeHttpUrl(g.ciUrl);
+          box.append(plRow({ ic, tone, title: state.streamer ? tr('places.deploy.aRepo') : `${g.repo} · ${g.branch}`, meta, onClick: ciUrl && !state.streamer ? () => window.open(ciUrl, '_blank', 'noopener,noreferrer') : null }));
         }
         body.append(plGroup(tr('places.deploy.git')), box);
       }

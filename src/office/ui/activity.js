@@ -14,6 +14,7 @@ import { whereabouts } from '../people/outings.js';
 import { imageUrl, openImage } from './image-view.js';
 import { renderHome } from './phone-home.js';
 import { t as tr, num } from '../../i18n/index.js';
+import { safeHttpUrl } from '../../shared/safe-url.js';
 
 let feedFilter = 'all';
 let query = '';
@@ -66,7 +67,8 @@ function alertCard(e) {
   const head = el('div', 'fa-head'); head.append(icon('alert'), el('b', null, dnOf(e)), el('time', null, hhmm(e.ts)));
   const acts = el('div', 'fa-acts');
   const open = el('button'); open.type = 'button'; open.dataset.sess = e.sess; if (e.agent) open.dataset.agent = e.agent; open.append(icon('monitor'), wait ? tr('activity.openToApprove') : tr('activity.seeError')); acts.append(open);
-  if (s?.link) { const a = el('a'); a.href = s.link; a.target = '_blank'; a.rel = 'noopener'; a.append(icon('phone'), tr('activity.openOnPhone')); acts.append(a); }
+  const link = safeHttpUrl(s?.link);
+  if (link) { const a = el('a'); a.href = link; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.append(icon('phone'), tr('activity.openOnPhone')); acts.append(a); }
   box.append(head, el('p', null, cap(verb(e))), acts);
   li.append(box);
   return li;
