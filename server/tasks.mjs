@@ -38,7 +38,8 @@ export function createTasks({ dataDir, claude, codex = () => null, opencode = ()
     const agent = from?.agent || 'claude';
     if (typeof model !== 'string' || (model && (!/^[a-zA-Z0-9][a-zA-Z0-9._:/#-]{0,199}$/.test(model) || agent === 'zcode'))) return { ok: false, code: 'badModel' };
     if (!['claude', 'codex', 'opencode', 'antigravity', 'zcode'].includes(agent) || (['antigravity', 'zcode'].includes(agent) && from?.fork)) return { ok: false, code: 'noAgent' };
-    const bin = (agent === 'codex' ? codex : agent === 'opencode' ? opencode : agent === 'antigravity' ? antigravity : agent === 'zcode' ? zcode : claude)(); if (!bin) return { ok: false, code: agent === 'claude' ? 'noClaude' : 'noAgent' };
+    const bin = (agent === 'codex' ? codex : agent === 'opencode' ? opencode : agent === 'antigravity' ? antigravity : agent === 'zcode' ? zcode : claude)();
+    if (!bin || (!['claude', 'zcode'].includes(agent) && !bin.protocol)) return { ok: false, code: agent === 'claude' ? 'noClaude' : 'noAgent' };
     if (!dir || !fs.existsSync(dir)) return { ok: false, code: 'noDir' };
     const id = `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`, files = [];
     for (const [i, d] of images.slice(0, MAX_IMAGES).entries()) {
@@ -62,23 +63,16 @@ export function createTasks({ dataDir, claude, codex = () => null, opencode = ()
     return { ok: true, task: pub(t) };
   }
   function runPrint(t) {
-    const { from, system, agent, files, model, prompt, text } = t;
+    const { from, system, agent, files, model, prompt } = t;
     const modelArgs = model ? ['--model', model] : [];
     const set = agent === 'claude' ? printSettings?.(t) : null;
     // (from.fork false: carry on that very conversation, one this office started for you, instead of a branch of it)
     const args = agent === 'zcode'
       ? ['--output-format', 'stream-json', '--mode', 'build', '--disallowed-tools', 'CreateWorkflow,AmendWorkflow', ...(from?.sid ? ['--resume', from.sid] : []), ...files.flatMap((f) => ['--attach', f]), '-p', prompt]
-      : agent === 'antigravity'
-      ? ['--input-format', 'stream-json', '--output-format', 'stream-json', ...modelArgs, ...(from?.sid ? ['--conversation', from.sid] : [])]
-      : agent === 'opencode'
-      ? ['run', '--format', 'json', ...modelArgs, ...(from?.sid ? ['--session', from.sid, ...(from.fork === false ? [] : ['--fork'])] : []), ...files.flatMap((f) => ['--file', f])]
-      : agent === 'codex'
-      ? ['exec', ...(from?.sid ? [from.fork === false ? 'resume' : 'fork', '--json', ...modelArgs, ...files.flatMap((f) => ['-i', f]), from.sid, '-'] : ['--json', ...modelArgs, ...files.flatMap((f) => ['-i', f]), '-'])]
       : ['-p', prompt, '--output-format', 'stream-json', '--verbose', ...modelArgs, ...(from?.sid ? ['--resume', from.sid, ...(from.fork === false ? [] : ['--fork-session'])] : []), ...(system ? ['--append-system-prompt', system] : []), ...(set ? ['--settings', set] : [])];
     let proc;
-    try { proc = spawn(t.bin.file, [...(t.bin.args || []), ...args], { cwd: t.dir, env: t.env, stdio: [['claude', 'zcode'].includes(agent) ? 'ignore' : 'pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true }); }
+    try { proc = spawn(t.bin.file, [...(t.bin.args || []), ...args], { cwd: t.dir, env: t.env, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true }); }
     catch { return false; }
-    if (!['claude', 'zcode'].includes(agent)) { proc.stdin.on('error', () => {}); proc.stdin.end(agent === 'antigravity' ? JSON.stringify({ event: 'user', message: { role: 'user', content: prompt } }) + '\n' : text); }
     Object.assign(t, { mode: 'print', proc, pid: proc.pid });
     // its stream: the new session's id (init) and its last words (result)
     const onLine = (line) => {
@@ -87,29 +81,6 @@ export function createTasks({ dataDir, claude, codex = () => null, opencode = ()
         if (agent === 'zcode') {
           if (j.sessionId) t.sid = String(j.sessionId);
           if (j.type === 'result') t.result = String(j.response || '').slice(0, 120_000);
-          return;
-        }
-        if (agent === 'antigravity') {
-          if (j.event === 'init' && (j.conversation_id || j.init?.conversation_id)) t.sid = String(j.conversation_id || j.init.conversation_id);
-          if (j.event === 'result') {
-            if (j.result?.conversation_id) t.sid = String(j.result.conversation_id);
-            t.result = String(j.result?.response || '').slice(0, 120_000);
-            if (j.result?.status && j.result.status !== 'SUCCESS') t.error = String(j.result.error || j.result.status).slice(0, 300);
-          }
-          return;
-        }
-        if (agent === 'opencode') {
-          if (j.sessionID) t.sid = String(j.sessionID);
-          if (j.type === 'text' && typeof j.part?.text === 'string') t.result = (t.result + (t.result ? '\n' : '') + j.part.text).slice(0, 120_000);
-          if (j.type === 'tool_use' && j.part?.tool) onStep?.(t, { name: ({ bash: 'Bash', read: 'Read', edit: 'Edit', write: 'Write' })[j.part.tool] || j.part.tool, input: j.part.state?.input || {} });
-          if (j.type === 'error') t.error = String(j.error?.message || 'error').slice(0, 300);
-          return;
-        }
-        if (agent === 'codex') {
-          if (j.type === 'thread.started' && j.thread_id) t.sid = String(j.thread_id);
-          if (j.type === 'item.completed' && j.item?.type === 'agent_message') t.result = String(j.item.text || '').slice(0, 120_000);
-          if (j.type === 'item.completed' && j.item?.type === 'command_execution') onStep?.(t, { name: 'Bash', input: { command: j.item.command || '' } });
-          if (j.type === 'turn.failed' || j.type === 'error') t.error = String(j.error?.message || j.message || 'error').slice(0, 300);
           return;
         }
         if (j.type === 'system' && j.subtype === 'init' && j.session_id) t.sid = j.session_id;

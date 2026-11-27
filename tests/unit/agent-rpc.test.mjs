@@ -42,3 +42,35 @@ for (const agent of ['codex', 'opencode', 'antigravity']) {
     } finally { for (const t of tasks.list()) tasks.stop(t.id); fs.rmSync(dir, { recursive: true, force: true }); }
   });
 }
+
+test('non-Claude work keeps its own runner, namespace, and secret redaction with background work enabled', { timeout: 15000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'office-agent-bg-')), script = path.join(dir, 'cli.mjs');
+  fs.writeFileSync(script, `import {serveFakeAgent} from ${JSON.stringify(fixture)};await serveFakeAgent({agent:'codex',sid:'same'});`);
+  let finish; const done = new Promise((resolve) => { finish = resolve; });
+  const tasks = createTasks({ dataDir: dir, claude: () => null, codex: () => ({ file: process.execPath, args: [script], protocol: 'codex' }), env: () => process.env,
+    bg: { want: () => true, probe: () => assert.fail('only Claude probes background support') },
+    printSettings: () => assert.fail('only Claude receives hook settings'), onDone: finish });
+  try {
+    const r = tasks.start({ dir, text: 'work token=example-secret-value', from: { agent: 'codex', sid: 'same', fork: false } });
+    assert.equal(r.ok, true);
+    assert.equal(r.task.mode, 'print');
+    assert.doesNotMatch(r.task.text, /example-secret-value/);
+    assert.equal(tasks.of('same'), null);
+    assert.equal(tasks.of('codex:same')?.id, r.task.id);
+    assert.equal(tasks.of('opencode:same'), null);
+    const t = await done;
+    assert.equal(t.result, 'done'); assert.equal(t.error, '');
+  } finally { for (const t of tasks.list()) tasks.stop(t.id); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a protocol CLI that cannot start clears its running slot and reports the failure', { timeout: 15000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'office-missing-task-'));
+  try {
+    let finish; const done = new Promise((resolve) => { finish = resolve; });
+    const tasks = createTasks({ dataDir: dir, claude: () => null, codex: () => ({ file: path.join(dir, 'missing-executable'), protocol: 'codex' }), env: () => process.env, onDone: finish });
+    assert.equal(tasks.start({ dir, text: 'work', from: { agent: 'codex', sid: 'source', fork: true } }).ok, true);
+    const task = await done;
+    assert.ok(task.error);
+    assert.deepEqual(tasks.list(), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
