@@ -215,8 +215,6 @@ function md(text) {
   }
   return f;
 }
-// the clocks of the cards at work, every second while the chat is open
-setInterval(() => { if (!root || root.hidden) return; for (const x of root.querySelectorAll('.zc-work-h small[data-at]')) x.textContent = tr('chat.card.meta', { n: Number(x.dataset.n), took: clock(Date.now() - Number(x.dataset.at)) }); }, 1000);
 // Claude at work on what you sent it: what it is doing (its latest steps, live), an approval it waits for, then done
 const clock = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 function workCard(m) {
@@ -476,7 +474,6 @@ function drawToCache() {
   const w = cacheWords(sessions.get(target?.id)?.cache, matchMedia('(max-width: 640px)').matches ? 'chatShort' : 'chat');   // (a phone: the short one)
   c.hidden = !w.text; c.dataset.state = w.state; if (c.textContent !== w.text) c.textContent = w.text;
 }
-setInterval(() => { if (root && !root.hidden) drawToCache(); }, 20_000);
 
 /* ---------- quick commands over the input (to a conversation or a project): a tap fills the input, ✎ changes them ----------
    Shared by the Mac and the phones (data/quick.json); the office's own until you change them. */
@@ -946,5 +943,8 @@ export function setup() {
   window.visualViewport?.addEventListener('resize', fitKeyboard); window.visualViewport?.addEventListener('scroll', fitKeyboard);
   $('btn-chat')?.addEventListener('click', () => toggle());
   addEventListener('keydown', (e) => { if (e.key === 'Escape' && chat.open && !e.defaultPrevented) toggle(false); });
+  // the clocks of the cards at work, every second while the chat is open; cache warmth every 20 s
+  setInterval(() => { if (!root || root.hidden) return; for (const x of root.querySelectorAll('.zc-work-h small[data-at]')) x.textContent = tr('chat.card.meta', { n: Number(x.dataset.n), took: clock(Date.now() - Number(x.dataset.at)) }); }, 1000);
+  setInterval(() => { if (root && !root.hidden) drawToCache(); }, 20_000);
   badge();
 }
