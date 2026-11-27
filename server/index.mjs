@@ -21,11 +21,11 @@ import { normalizeAgentEvent, normalizeTool } from './agent-events.mjs';
 import { readCodexHistory } from './codex-history.mjs';
 import { createAgentHistory } from './agent-history.mjs';
 import { createBinFinder } from './cli-command.mjs';
-import { editorByDot, claudeEditorSettings } from './editors.mjs';
 import { createTranslator } from './translate.mjs';
 import { createAuth, KEEP_DAYS } from './auth.mjs';
 import { createTunnel } from './tunnel.mjs';
 import { createApprovals } from './approvals.mjs';
+import { createClaudeAccounts } from './claude-accounts.mjs';
 import { createUndo, EDIT_TOOLS as UNDO_TOOLS } from './undo.mjs';
 import { createVault } from './vault.mjs';
 import { MAIN, SUB, modelsOf, withModels, hasSplit, withSplit } from './models.mjs';
@@ -43,7 +43,6 @@ import { createTasks } from './tasks.mjs';
 import { listModels } from './models.mjs';
 import { createBg, bgSettings, printSettings } from './bg-sessions.mjs';
 import { steerable, inboundFrom, isSocket, deliver } from './steer.mjs';
-import { createAutoResume } from './auto-resume.mjs';
 import { createRewriter } from './rewrite.mjs';
 import { createPush } from './push.mjs';
 import { SHOT_ASK, shoot, shotsIn } from './shots.mjs';
@@ -601,7 +600,7 @@ const bgOn = () => !!prefs.get('phoneTasksBg');
 const bgOut = () => { const k = bgRun.known(findClaude()); return { on: bgOn(), ok: k ? k.ok : null, version: k?.version || null }; };
 const tasks = createTasks({
   dataDir: DATA_DIR, claude: () => findClaude(), codex: () => findCodex(), opencode: () => findOpenCodeCached(), antigravity: () => findAntigravity(), zcode: () => findZCode(),
-  env: () => { const e = { ...process.env }; if (nowDir) e.CLAUDE_CONFIG_DIR = nowDir; return e; },   // (the account new sessions start on)
+  env: () => { const e = { ...process.env }; if (getNowDir()) e.CLAUDE_CONFIG_DIR = getNowDir(); return e; },   // (the account new sessions start on)
   bg: { ...bgRun, want: bgOn, settings: () => bgSettings({ port: PORT, win: WIN, send: SEND }) },
   printSettings: (t) => printSettings({ port: PORT, task: t.id, win: WIN, send: SEND }),   // (a `-p` run tells where its inbox is: server/steer.mjs)
   onStep: (t, x) => cardStep(t.id, stepOf(x.name, x.input)),
@@ -633,7 +632,7 @@ const tasks = createTasks({
 });
 /* ---------- "✨ Viết lại cho rõ", the chat's prompt helper (server/rewrite.mjs): a message for Claude, made clearer by a
    small model, on the account new sessions start on, in an empty folder of the office's ---------- */
-const rewriter = createRewriter({ claude: () => findClaude(), env: () => { const e = { ...process.env }; if (nowDir) e.CLAUDE_CONFIG_DIR = nowDir; return e; }, dir: path.join(DATA_DIR, 'rewrite') });
+const rewriter = createRewriter({ claude: () => findClaude(), env: () => { const e = { ...process.env }; if (getNowDir()) e.CLAUDE_CONFIG_DIR = getNowDir(); return e; }, dir: path.join(DATA_DIR, 'rewrite') });
 /* ---------- notifications on the phones that said yes (server/push.mjs): Claude's answers, and an approval a run started
    from the office needs while nobody has the office open; none while an office page is looked at ---------- */
 const claudeVersion = createClaudeVersion({ dataDir: DATA_DIR });   // (Claude Code's version on this computer, server/claude-version.mjs)
@@ -709,7 +708,7 @@ async function parkForPhone(s) {
   if (s.entry !== 'claude-vscode') return { ok: false, message: tr('chat.task.macTerminal', { name }) };
   const eds = setEditorWrapper(true), host = eds.find((e) => e.app === s.origin);
   if (!(host ? host.ok : eds.some((e) => e.ok))) return { ok: false, message: tr('server.move.noScript') };
-  editorsNow = eds;
+  setEditorsNow(eds);
   const proc = (await sysSnapshot().catch(() => null))?.claude?.find((c) => c.pid === s.pid);
   if (!proc) return { ok: true };   // (already gone: nothing to close)
   const acct = acctOf(s) || '', pin = path.join(PIN_DIR, s.sid);
@@ -760,9 +759,10 @@ const otel = createOtel({ dir: path.join(DATA_DIR, 'otel'), cwdOf: (sid) => bySi
 function burnOut(range) {
   const r = otel.report(range === '7d' ? '7d' : 'today');
   let settings = {}; try { settings = JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, 'settings.json'), 'utf8')); } catch { /* none */ }
-  const w = (planLimits?.windows || []).find((x) => x.key === 'weekly');
+  const lim = getPlanLimits();
+  const w = (lim?.windows || []).find((x) => x.key === 'weekly');
   let plan = null;
-  if (w && w.pct >= 1 && w.resetsAt > Date.now()) { const usd = otel.usdSince(w.resetsAt - 7 * 86400e3); if (usd >= 0.5) plan = { pct: w.pct, resetsAt: w.resetsAt, perUsd: w.pct / usd, name: planLimits.account?.plan || '' }; }
+  if (w && w.pct >= 1 && w.resetsAt > Date.now()) { const usd = otel.usdSince(w.resetsAt - 7 * 86400e3); if (usd >= 0.5) plan = { pct: w.pct, resetsAt: w.resetsAt, perUsd: w.pct / usd, name: lim?.account?.plan || '' }; }
   const shown = r.sessions.slice(0, 40), rest = r.sessions.slice(40);
   const named = (x) => { const s = bySid(x.sid); return { ...x, name: s ? s.title || s.name : '', open: !!s, dir: tilde(x.cwd), cwd: undefined }; };
   return { ok: true, ...r, sessions: shown.map(named), rest: { n: rest.length, usd: rest.reduce((a, x) => a + x.usd, 0), share: rest.reduce((a, x) => a + x.share, 0) },
@@ -1477,38 +1477,26 @@ function loopAct(b, mac) {
 }
 const loopOut = () => ({ ok: true, ...loopConfig(), choices: { n: LOOP_N, min: LOOP_MIN }, hookAt: loopHookAt });
 
-/* ---------- plan usage from Claude Code's status line ----------
-   bin/cli.mjs installs hooks/status-line.mjs as the statusLine command; it posts the documented fields here: the
-   5-hour and 7-day windows (Pro / Max), the exact context window, the session's cost. Kept in data/limits.json. */
-const LIMITS_FILE = path.join(DATA_DIR, 'limits.json');
-let planLimits = null, statusAt = 0;
-try { planLimits = JSON.parse(fs.readFileSync(LIMITS_FILE, 'utf8')); } catch { /* none yet */ }
+const { findClaude, findCodex, findOpenCode: findOpenCodeCached, findAntigravity, findZCode } = createBinFinder({ home: HOME });
+const {
+  PIN_DIR, PARK_MS, logins, slugOf, getPlanLimits, getOtherDirs, getNowDir, resetModelCache, setEditorsNow,
+  setLimits, limitsOut, noteText, fetchPlanUsage, fetchOtherUsage, usageAfterTurn,
+  orderOf, untilOf, acctOf, acctLabel, acctShown, dirOfSlug, closingOnPurpose, shareWithMain, setSwitch, claudeRows,
+  limitHit, moveSession, autoMoveSoon, unpark, prepareAccount, startLogin, setEditorWrapper,
+} = createClaudeAccounts({
+  root: ROOT, dataDir: DATA_DIR, port: PORT, home: HOME, claudeDir: CLAUDE_DIR, prefs, osAdapter: OS, findClaude,
+  sysSnapshot, sysAction, sessions, pending, chat, pub, broadcast, watching, actionLog: ACTION_LOG, tr,
+});
+
+/* ---------- plan usage from Claude Code's status line ---------- */
+let statusAt = 0;
 const numOr = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-// windows: [{ key, label, pct, resetsAt, weekOf? }]; `five` / `seven` stay for the TV and older pages
-function setLimits(windows, source, account = planLimits?.account || null) {
-  const next = { at: Date.now(), source, windows, account, five: windows.find((w) => w.key === 'session') || null, seven: windows.find((w) => w.key === 'weekly') || null };
-  const sig = (l) => JSON.stringify(l?.windows?.map((w) => [w.key, w.pct, w.resetsAt]) || null);
-  const moved = sig(planLimits) !== sig(next);
-  planLimits = next;
-  if (moved) { broadcast({ k: 'limits', limits: limitsOut(), note: '' }); repick(); }
-  fsp.writeFile(LIMITS_FILE, JSON.stringify(planLimits)).catch(() => {});
-}
-// A window's label is words: "5 h", "Week", "Opus (week)" (weekOf: the model). Written when a reading arrives and again
-// each time the limits are sent, so a reading saved before a language switch reads in the new language.
-const winLabel = (w) => clip(String(w.key === 'session' ? tr('server.limits.fiveHour') : w.key === 'weekly' ? tr('server.limits.week') : w.weekOf ? tr('server.limits.modelWeek', { model: w.weekOf }) : w.label), 30);
-function limitsOut() {
-  const l = planLimits, more = othersOut(), main = { label: acctLabel(''), until: blockedUntil(l?.windows, hits.get('')), auto: autoOut() };
-  if (!l) return more.length ? { windows: [], others: more, ...main } : l;
-  return { ...l, windows: Array.isArray(l.windows) ? l.windows.map((w) => ({ ...w, label: winLabel(w) })) : l.windows,
-    five: l.five && { ...l.five, label: tr('server.limits.fiveHour') }, seven: l.seven && { ...l.seven, label: tr('server.limits.week') }, others: more, ...main };
-}
 function onStatus(p) {
   if (!p || typeof p !== 'object') return;
   statusAt = Date.now();
   const win = (key, label, w) => (w && numOr(w.used_percentage) != null ? { key, label, pct: Math.round(w.used_percentage * 10) / 10, resetsAt: numOr(w.resets_at) ? w.resets_at * 1000 : null } : null);
   const rl = p.rate_limits;
-  // the status line only knows the two big windows; the account's own reading (below) wins while it works
-  if (rl && typeof rl === 'object' && planLimits?.source !== 'api') {
+  if (rl && typeof rl === 'object' && getPlanLimits()?.source !== 'api') {
     const windows = [win('session', tr('server.limits.fiveHour'), rl.five_hour), win('weekly', tr('server.limits.week'), rl.seven_day)].filter(Boolean);
     if (windows.length) setLimits(windows, 'statusline');
   }
@@ -1520,18 +1508,13 @@ function onStatus(p) {
     const c = p.prompt_cache && cacheFromStatus(p.prompt_cache, s.live.ctx);
     if (c) {
       const was = s.cache; s.cache = c; s.cacheExact = true;
-      // (at work the session's events carry it; resting, only a change worth redrawing: it went cold, or a new clock)
       if (s.status !== 'work' && (!was || (was.until > 0) !== (c.until > 0) || Math.abs(was.until - c.until) > 60e3 || was.tokens !== c.tokens)) broadcast({ k: 'sess', s: pub(s) });
     }
   }
 }
 
-/* ---------- the prompt cache's clock ("Đồng hồ bộ nhớ đệm", src/shared/cache-clock.js) ----------
-   Per session: until when its cache stays warm and what the next message re-reads once it is cold, from the status
-   line (prompt_cache), a resumed session's SessionStart, or, with neither, guessed from the end of its last turn and the
-   documented lifetime: an hour on a subscription (the plan's limits are known), five minutes otherwise. Optionally (off
-   unless you turn it on: Settings → More) a phone is told when a session waiting for your answer is about to go cold. */
-const ttlGuess = () => (planLimits?.windows?.length ? '1h' : '5m');
+/* ---------- the prompt cache's clock ("Đồng hồ bộ nhớ đệm", src/shared/cache-clock.js) ---------- */
+const ttlGuess = () => (getPlanLimits()?.windows?.length ? '1h' : '5m');
 const cacheOut = (s) => (s.cache ? { until: s.cache.until, ttl: s.cache.ttl, tokens: s.cache.tokens, guessed: !!s.cache.guessed } : null);
 const NUDGE_MS = 5 * 60e3;
 setInterval(() => {
@@ -1539,7 +1522,6 @@ setInterval(() => {
   const now = Date.now();
   for (const s of sessions.values()) {
     const k = cacheClock(s.cache, now);
-    // waiting for you: a question it ended its turn with, or one it holds open (a question, an approval)
     const waits = s.status === 'wait' || (s.status === 'rest' && s.askedYou);
     if (k.state !== 'warm' || k.left > NUDGE_MS || !waits || s.nudged === s.cache.until) continue;
     s.nudged = s.cache.until;
@@ -1547,122 +1529,9 @@ setInterval(() => {
   }
 }, 30_000).unref();
 
-/* ---------- plan usage read from Anthropic, the way the IDE's Usage panel does (allowed by the user, 27/10/2026) ----------
-   Claude Code's own login is read from the macOS Keychain each time (never stored, logged or sent anywhere else), then
-   GET api.anthropic.com/api/oauth/usage. Undocumented: on any failure the office keeps the status-line numbers. Asked
-   every 2 minutes while a page is open, and 15 s after a session finishes a turn. OFFICE_USAGE=0 turns it off. */
-// usageNote: why the limits can't be read, as [key, vars] for tr(); written out when it is sent (noteText)
-let planBusy = null, usageNote = null, usageWait = 0, usageBackoff = 0;
-const noteText = () => (usageNote ? tr(...usageNote) : '');
-// Which account Claude Code is logged into (one login per Mac, shared by every session): ~/.claude.json oauthAccount.
-// A personal account's organisation is named after the email, so only the plan is shown for it.
-const ACCOUNT_FILE = process.env.CLAUDE_CONFIG_DIR ? path.join(CLAUDE_DIR, '.claude.json') : path.join(os.homedir(), '.claude.json');
-const PLAN_NAME = { max: 'Max', pro: 'Pro', team: 'Team', enterprise: 'Enterprise' };
-function loginAccount(login, file = ACCOUNT_FILE) {
-  let a = {}; try { a = JSON.parse(fs.readFileSync(file, 'utf8')).oauthAccount || {}; } catch { /* not logged in with claude.ai */ }
-  const plan = PLAN_NAME[String(login?.subscriptionType || '').toLowerCase()] || (login?.subscriptionType ? String(login.subscriptionType) : '');
-  const org = String(a.organizationName || '');
-  const personal = !org || org.includes('@') || /'s Organi[sz]ation$/i.test(org);
-  return { id: `${a.accountUuid || ''}:${a.organizationUuid || ''}`, plan, org: personal ? '' : clip(org, 40) };
-}
-// Claude Code's sign-in: the login keychain on a Mac, its credentials file elsewhere (server/platform)
-const keychainLogin = () => OS.claudeLogin();
-// no login to read for the main folder: never signed in there (its .claude.json has no account: ~/.claude.json, or the
-// folder's own when CLAUDE_CONFIG_DIR is set), maybe only other accounts are; or signed in, and its token is nowhere
-function loginMissingNote() {
-  let signedIn = false;
-  try { signedIn = !!JSON.parse(fs.readFileSync(process.env.CLAUDE_CONFIG_DIR ? path.join(CLAUDE_DIR, '.claude.json') : path.join(HOME, '.claude.json'), 'utf8')).oauthAccount; } catch { /* none */ }
-  if (signedIn) return ['server.usage.keychain'];
-  return [otherDirs.length ? 'server.usage.mainSignedOutOthers' : 'server.usage.mainSignedOut', { dir: tilde(CLAUDE_DIR) }];
-}
-function usageWindows(j) {
-  const out = [], iso = (t) => (t ? Date.parse(t) || null : null);
-  for (const l of Array.isArray(j.limits) ? j.limits : []) {
-    if (typeof l?.percent !== 'number') continue;
-    // personal plans (Pro / Max) have a weekly limit over all models; org plans (Team / Enterprise) may only have the
-    // 5-hour one and per-model weeks. Whatever rows come back are shown, in that order.
-    const model = l.scope?.model?.display_name, kind = String(l.kind || ''), group = String(l.group || '');
-    const session = kind === 'session' || /five|5h|session/i.test(kind), weekly = !session && (group === 'weekly' || /week|seven|7d/i.test(kind));
-    const key = session ? 'session' : weekly && !model ? 'weekly' : `${kind}:${model || group}`;
-    const w = { key, label: model || group || kind, pct: l.percent, resetsAt: iso(l.resets_at), active: l.is_active !== false, ...(weekly && model ? { weekOf: model } : {}) };
-    out.push({ ...w, label: winLabel(w) });
-  }
-  // the older top-level fields fill whatever the list left out (a personal plan's week may only be there; on an org
-  // plan seven_day is null, so no week shows)
-  const has = (k) => out.some((w) => w.key === k);
-  if (!has('session') && typeof j.five_hour?.utilization === 'number') out.unshift({ key: 'session', label: tr('server.limits.fiveHour'), pct: j.five_hour.utilization, resetsAt: iso(j.five_hour.resets_at) });
-  if (!has('weekly') && typeof j.seven_day?.utilization === 'number') out.push({ key: 'weekly', label: tr('server.limits.week'), pct: j.seven_day.utilization, resetsAt: iso(j.seven_day.resets_at) });
-  for (const [k, name] of [['seven_day_opus', 'Opus'], ['seven_day_sonnet', 'Sonnet']]) {
-    if (typeof j[k]?.utilization !== 'number' || out.some((w) => w.weekOf === name)) continue;
-    out.push({ key: `weekly:${name}`, label: tr('server.limits.modelWeek', { model: name }), weekOf: name, pct: j[k].utilization, resetsAt: iso(j[k].resets_at) });
-  }
-  return out;
-}
-function fetchPlanUsage(force = false) {
-  if (process.env.OFFICE_USAGE === '0') return Promise.resolve();
-  // the endpoint rate-limits: never more than once every 2 minutes (a restart or a new page reuses the saved reading),
-  // and after a 429 wait 5, 10, then up to 30 minutes
-  if (Date.now() < usageWait || (!force && planLimits?.source === 'api' && Date.now() - planLimits.at < 110_000)) return Promise.resolve();
-  return (planBusy ??= (async () => {
-    const login = await keychainLogin();
-    if (!login?.accessToken) { usageNote = loginMissingNote(); return; }
-    try {
-      const r = await fetch('https://api.anthropic.com/api/oauth/usage', { headers: { Authorization: `Bearer ${login.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' }, signal: AbortSignal.timeout(10000) });
-      if (r.status === 429) { usageBackoff = Math.min(30, (usageBackoff || 2.5) * 2); usageWait = Date.now() + Math.max(usageBackoff * 60e3, (Number(r.headers.get('retry-after')) || 0) * 1000); usageNote = ['server.usage.rateLimited', { n: usageBackoff }]; return; }
-      if (!r.ok) { usageNote = r.status === 401 ? ['server.usage.expired'] : ['server.usage.httpError', { status: r.status }]; return; }
-      usageBackoff = 0;
-      const body = await r.json();
-      // the raw limit rows (no tokens, no personal data) help when a plan shows a limit the office doesn't know yet
-      try { fs.writeFileSync(path.join(DATA_DIR, 'usage-raw.json'), JSON.stringify({ at: Date.now(), plan: loginAccount(login).plan, keys: Object.keys(body || {}), limits: body?.limits ?? null, five_hour: body?.five_hour ?? null, seven_day: body?.seven_day ?? null, seven_day_opus: body?.seven_day_opus ?? null, seven_day_sonnet: body?.seven_day_sonnet ?? null }, null, 1)); } catch { /* best effort */ }
-      const windows = usageWindows(body);
-      usageNote = null;
-      setLimits(windows, 'api', loginAccount(login));
-    } catch { usageNote = ['server.usage.offline']; }
-    if (usageNote) broadcast({ k: 'limits', limits: limitsOut(), note: noteText() });
-  })().finally(() => { planBusy = null; }));
-}
-setInterval(() => { if (watching()) { fetchPlanUsage(); for (const d of otherDirs) setTimeout(() => fetchOtherUsage(d), Math.random() * 40e3).unref(); } }, 120_000).unref();
-
-/* ---------- other accounts on this machine ----------
-   A second Claude Code login lives in its own config folder (CLAUDE_CONFIG_DIR, e.g. ~/.claude-org2): found as the
-   ~/.claude-* folders that are logged in (their .claude.json has an account), plus any listed in OFFICE_CLAUDE_DIRS.
-   Each one's usage is read the same way as the main account's, on its own schedule; a session belongs to the account
-   whose folder its transcript is in (Claude Code writes it there even when projects/ is shared by a link). */
-// (switching accounts, further down: kept up here because the first scan below already reads them)
-const hits = new Map();   // account ('' = the main one) -> until when a session was told it is out of usage
-const NOW_FILE = path.join(DATA_DIR, 'account-now'), SWITCH_FILE = path.join(DATA_DIR, 'claude-switch.sh');
-const CLOSING_DIR = path.join(DATA_DIR, 'closing');   // the Claude processes the office is closing on purpose (the editor's script reads it)
-// before closing them: their ids, so the editor's script tells the editor they ended well (no red "exited with code 143")
-function closingOnPurpose(pids) { try { fs.mkdirSync(CLOSING_DIR, { recursive: true }); for (const p of pids) if (p) fs.writeFileSync(path.join(CLOSING_DIR, String(p)), ''); } catch { /* read-only data: the editor shows its message */ } }
-setInterval(() => { try { for (const f of fs.readdirSync(CLOSING_DIR)) { const p = path.join(CLOSING_DIR, f); if (Date.now() - fs.statSync(p).mtimeMs > 10 * 60e3) fs.rmSync(p, { force: true }); } } catch { /* none */ } }, 10 * 60e3).unref();
-const PIN_DIR = path.join(DATA_DIR, 'resume-on'), PARK_MS = 24 * 3600e3;   // a conversation moved to another account: <its id> -> that account's folder
-const FULL_PCT = 98;   // a limit this used: no new session on that account
-// what an account's folder takes from the main one, by a link (when the main one has it): a session on any account has
-// the same history (resume), memory, settings, skills and plugins
-const SHARED = ['projects', 'sessions', 'ide', 'plugins', 'skills', 'agents', 'commands', 'output-styles', 'file-history', 'todos', 'plans', 'settings.json', 'CLAUDE.md', 'keybindings.json'];
-let nowDir = '', modelAt = 0, modelNow = '', editorsNow = [], switchAlias = '';
-try { nowDir = fs.readFileSync(NOW_FILE, 'utf8').split('\n')[0].trim(); } catch { /* the main account */ }
-let otherDirs = [];
-const others = new Map();   // folder -> { at, windows, account, note, wait, backoff }
-const accName = (d) => clip(path.basename(d).replace(/^\.claude-?/, '') || path.basename(d), 16);
-const loggedIn = (d) => { try { return !!JSON.parse(fs.readFileSync(path.join(d, '.claude.json'), 'utf8')).oauthAccount; } catch { return false; } };
-function scanAccounts() {
-  const home = os.homedir(), found = new Set();
-  for (const d of String(process.env.OFFICE_CLAUDE_DIRS || '').split(path.delimiter).filter(Boolean)) found.add(path.resolve(d.replace(/^~(?=$|[\\/])/, home)));
-  try { for (const e of fs.readdirSync(home, { withFileTypes: true })) if (/^\.claude-./.test(e.name) && (e.isDirectory() || e.isSymbolicLink())) found.add(path.join(home, e.name)); } catch { /* no home */ }
-  const next = [...found].filter((d) => path.resolve(d) !== path.resolve(CLAUDE_DIR) && loggedIn(d)).sort();
-  if (next.join('|') !== otherDirs.join('|')) {
-    otherDirs = next; for (const d of others.keys()) if (!next.includes(d)) others.delete(d); for (const d of next) fetchOtherUsage(d, true);
-    broadcast({ k: 'limits', limits: limitsOut(), note: noteText() });   // (a new login shows at once, before its usage is read)
-    repick();
-  }
-}
-/* ---------- "Kho lịch sử" (server/vault.mjs): the words of every conversation, kept after Claude Code deletes its
-   transcript (30 days by default). Every account's projects folder, read 90 s after the office starts, then every 3
-   hours; searched and read from the vault drawer (ui/vault.js). OFFICE_VAULT=0 turns it off. ---------- */
-const vault = process.env.OFFICE_VAULT === '0' ? null : createVault({ dir: path.join(DATA_DIR, 'vault'), claudeDirs: () => [CLAUDE_DIR, ...otherDirs], log: (s) => console.log(s) });
+/* ---------- "Kho lịch sử" (server/vault.mjs) & "Phiếu điểm prompt" (server/prompt-report.mjs) ---------- */
+const vault = process.env.OFFICE_VAULT === '0' ? null : createVault({ dir: path.join(DATA_DIR, 'vault'), claudeDirs: () => [CLAUDE_DIR, ...getOtherDirs()], log: (s) => console.log(s) });
 if (vault) { setTimeout(() => vault.scan().catch(() => {}), 90_000).unref(); setInterval(() => vault.scan().catch(() => {}), 3 * 3600e3).unref(); }
-// what the drawer shows (secrets masked, as everywhere the office shows what was typed)
 const vaultItem = (x) => ({ ...x, title: redact(x.title), first: redact(x.first), cwd: tilde(x.cwd), ...(x.snip && { snip: redact(x.snip) }) });
 async function vaultOut(q, mac) {
   if (!vault) return { ok: false, off: true };
@@ -1670,12 +1539,10 @@ async function vaultOut(q, mac) {
     const rec = await vault.get(String(q.get('sid'))); if (!rec) return { ok: false };
     return { ok: true, rec: { ...rec, title: redact(rec.title), cwd: tilde(rec.cwd), msgs: rec.msgs.map((m) => ({ ...m, t: redact(m.t) })) } };
   }
-  if (mac && q.has('fresh')) await vault.scan().catch(() => {});   // (read again now: the Mac's own button, and the tests)
+  if (mac && q.has('fresh')) await vault.scan().catch(() => {});
   const items = (await vault.search(String(q.get('q') || '').slice(0, 200))).map(vaultItem);
   return { ok: true, stats: vault.stats(), items };
 }
-/* ---------- "Phiếu điểm prompt" (server/prompt-report.mjs): the last 7 days of what you wrote, against the 7 before,
-   with the chat's prompt-helper rules; the vault drawer's second tab, and a line in the chat on Monday morning ---------- */
 let reportCache = null;
 async function reportOut() {
   if (!vault) return { ok: false, off: true };
@@ -1693,442 +1560,6 @@ setInterval(async () => {
   const r = await reportOut().catch(() => null);
   if (r?.ok && r.now.n >= 10) chat.system(tr('chat.report.monday', { pct: r.now.pct, delta: delta(r.now.pct, r.prev.pct) || '–', n: r.now.n }));
 }, 30 * 60e3).unref();
-function othersOut() {
-  return otherDirs.map((d) => { const o = others.get(d) || {}, slug = accName(d);
-    return { name: slug, label: acctLabel(slug), until: blockedUntil(o.windows, hits.get(slug)), at: o.at || 0, account: o.account || null, expired: !!o.expired, renewing: renewing.has(d), windows: (o.windows || []).map((w) => ({ ...w, label: winLabel(w) })), note: o.note ? tr(...o.note) : '' }; });
-}
-const otherBusy = new Map();
-const OTHERS_FILE = path.join(DATA_DIR, 'others-usage.json');
-function saveOthers() {
-  const keep = Object.fromEntries([...others].filter(([, o]) => o.windows).map(([d, o]) => [d, { windows: o.windows, at: o.at, account: o.account }]));
-  fsp.writeFile(OTHERS_FILE, JSON.stringify(keep)).catch(() => {});
-}
-try { for (const [d, o] of Object.entries(JSON.parse(fs.readFileSync(OTHERS_FILE, 'utf8')))) others.set(d, { ...o }); } catch { /* none yet */ }
-/* An account nobody has used for a while: its sign-in token has run out (Claude Code renews it only while it runs), and
-   Anthropic's usage endpoint answers a dead token with 429 "rate limited", not 401. So no request goes out with a dead
-   token: Claude Code itself is run once on that account (Haiku, one word, no hooks, no MCP servers, nothing saved, no
-   tools: a few seconds and a sliver of that account's usage), which renews the token the way it always does, and then
-   the usage is read. By itself at most every 6 hours per account; the plan card's "Làm mới" any time. */
-const RENEW_EVERY = 6 * 3600e3;
-const dead = (login) => !!login?.expiresAt && login.expiresAt < Date.now();
-const renewing = new Map();   // folder -> its run
-function refreshLogin(dir) {
-  if (renewing.has(dir)) return renewing.get(dir);
-  const bin = findClaude();
-  if (!bin) return Promise.resolve(false);
-  const cwd = path.join(DATA_DIR, 'renew');
-  try { fs.mkdirSync(cwd, { recursive: true }); } catch { /* the run still goes */ }
-  const run = new Promise((resolve) => {
-    const child = execFile(bin.file, [...(bin.args || []), '-p', '--model', 'haiku', '--no-session-persistence', '--strict-mcp-config', '--tools', '', '--settings', '{"disableAllHooks":true}', 'Reply with the single word: ok'],
-      { cwd, env: { ...process.env, CLAUDE_CONFIG_DIR: dir }, timeout: 90_000, maxBuffer: 1 << 20, windowsHide: true }, (err) => resolve(!err));
-    child.stdin?.end();   // (-p reads stdin too: nothing comes)
-  }).then(async (ok) => { const now = await OS.claudeLogin(dir).catch(() => null); fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} renew login ${accName(dir)} -> ${now?.accessToken && !dead(now) ? 'renewed' : 'failed'}${ok ? '' : ' (its run ended in an error)'}\n`).catch(() => {}); return ok; })
-    .finally(() => renewing.delete(dir));
-  renewing.set(dir, run);
-  return run;
-}
-function fetchOtherUsage(dir, force = false) {
-  if (process.env.OFFICE_USAGE === '0') return Promise.resolve();
-  const o = others.get(dir) || {}; others.set(dir, o);
-  // the endpoint rate-limits each account: every 5 minutes at most (a forced read, when one runs out, still goes), and
-  // after a 429 Anthropic's own wait or 5, 10, then up to 30 minutes; the last reading stays on show meanwhile
-  if ((!force && o.at && Date.now() - o.at < 290_000) || otherBusy.has(dir)) return Promise.resolve();
-  const job = (async () => {
-    let login = await OS.claudeLogin(dir);
-    if (!login?.accessToken) { o.note = ['server.usage.keychain']; return; }
-    if (dead(login)) {   // (see refreshLogin: a dead token gets a 429 that is not a limit)
-      o.expired = true;
-      if (!force && Date.now() - (o.renewAt || 0) < RENEW_EVERY) { o.note = ['server.usage.tokenExpired']; return; }
-      o.renewAt = Date.now(); o.note = ['server.usage.renewing']; broadcast({ k: 'limits', limits: limitsOut(), note: noteText() });
-      await refreshLogin(dir);
-      login = await OS.claudeLogin(dir);
-      // (judged by the token, not by the run: an account at its limit has its one word refused, but the token renewed first)
-      if (!login?.accessToken || dead(login)) { o.note = ['server.usage.renewFailed']; return; }
-      o.expired = false; o.wait = 0; o.backoff = 0;
-    }
-    if (Date.now() < (o.wait || 0)) return;   // (Anthropic's own wait after a 429: the last note stays)
-    try {
-      const r = await fetch('https://api.anthropic.com/api/oauth/usage', { headers: { Authorization: `Bearer ${login.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' }, signal: AbortSignal.timeout(10000) });
-      if (r.status === 429) { o.backoff = Math.min(30, (o.backoff || 2.5) * 2); const ms = Math.max(o.backoff * 60e3, (Number(r.headers.get('retry-after')) || 0) * 1000); o.wait = Date.now() + ms; o.note = ['server.usage.rateLimited', { n: Math.ceil(ms / 60e3) }]; return; }
-      if (!r.ok) { o.note = r.status === 401 ? ['server.usage.expired'] : ['server.usage.httpError', { status: r.status }]; return; }
-      o.backoff = 0; o.note = null; o.windows = usageWindows(await r.json()); o.at = Date.now(); o.account = loginAccount(login, path.join(dir, '.claude.json'));
-      saveOthers();
-    } catch { o.note = ['server.usage.offline']; }
-  })().finally(() => { otherBusy.delete(dir); broadcast({ k: 'limits', limits: limitsOut(), note: noteText() }); repick(); });
-  otherBusy.set(dir, job);
-  return job;
-}
-// the account a session belongs to, by its transcript's folder ('' for the main one); one moved to another account and
-// not started again yet: that one
-const acctOf = (s) => { if (s.agent && s.agent !== 'claude') return null; if (s.parked) return s.parked.to; const t = s.transcript || ''; const d = otherDirs.find((x) => t.startsWith(x + path.sep)); return d ? accName(d) : ''; };
-scanAccounts();
-setInterval(scanAccounts, 60_000).unref();   // (a login made in a terminal shows up without a restart)
-
-/* ---------- adding an account (the plan card's "Add a Claude account") ----------
-   prepareAccount(name): a config folder of its own (~/.claude-<name>), the office's hooks and status line in its
-   settings.json (the CLI's own install, --settings: the same entries as the main account's), and the command that opens
-   Claude Code with it, to log in. Then the office looks for that login every few seconds for a while. */
-const slugOf = (name) => String(name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20).replace(/-+$/, '');
-/* Claude Code's CLI: on the PATH, else the usual install places and the editors' extensions (VS Code, Cursor, Windsurf,
-   Antigravity…: the newest), where it often is when Claude Code came with an editor and was never put on the PATH */
-const { findClaude, findCodex, findOpenCode: findOpenCodeCached, findAntigravity, findZCode } = createBinFinder({ home: HOME });
-// the command that starts Claude Code with an account's folder (for working with it later): `claude` when the PATH has it
-function accountCmd(slug) {
-  const bin = findClaude(), cli = !bin || bin.onPath ? 'claude' : `"${bin.file}"`;
-  return process.platform === 'win32'
-    ? { run: `$env:CLAUDE_CONFIG_DIR="$HOME\\.claude-${slug}"; ${bin && !bin.onPath ? `& ${cli}` : cli}`, alias: `function claude-${slug} { $env:CLAUDE_CONFIG_DIR="$HOME\\.claude-${slug}"; ${bin && !bin.onPath ? `& ${cli}` : cli} @args }` }
-    : { run: `CLAUDE_CONFIG_DIR="$HOME/.claude-${slug}" ${cli}`, alias: `alias claude-${slug}='CLAUDE_CONFIG_DIR="$HOME/.claude-${slug}" ${cli}'` };
-}
-/* Logging an account in without a terminal: Claude Code's own `claude auth login`, with the account's folder as its
-   CLAUDE_CONFIG_DIR. It opens the sign-in page through a little BROWSER script that also hands the office the page's
-   address ("open it again", "copy the link" for a private window) and finishes by itself when the browser comes back to
-   it; a code from the page's fallback goes to its stdin. Each step goes to the page as { k: 'acctlogin' }. */
-const logins = new Map();   // slug -> { child, state: 'waiting' | 'done' | 'failed' | 'cancelled', url, note }
-function browserScript() {
-  const f = path.join(DATA_DIR, 'open-login.sh');
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(f, '#!/bin/sh\n[ -n "$OFFICE_LOGIN_URL_FILE" ] && printf \'%s\\n\' "$1" > "$OFFICE_LOGIN_URL_FILE"\nif command -v open >/dev/null 2>&1; then exec open "$1"; else exec xdg-open "$1"; fi\n', { mode: 0o755 });
-  return f;
-}
-const pushLogin = (L) => broadcast({ k: 'acctlogin', name: L.slug, state: L.state, url: L.url || '', note: L.note || '' });
-function startLogin(slug) {
-  const was = logins.get(slug);
-  if (was?.state === 'waiting') return was;
-  const bin = findClaude();
-  if (!bin) return { slug, state: 'failed', note: tr('server.account.noCli') };
-  const urlFile = path.join(DATA_DIR, `login-${slug}.url`), env = { ...process.env, CLAUDE_CONFIG_DIR: path.join(os.homedir(), `.claude-${slug}`) };
-  try { fs.rmSync(urlFile, { force: true }); } catch { /* none */ }
-  if (process.platform !== 'win32') Object.assign(env, { BROWSER: browserScript(), OFFICE_LOGIN_URL_FILE: urlFile });
-  const L = { slug, state: 'waiting', url: '', note: '' };
-  try { L.child = spawn(bin.file, [...(bin.args || []), 'auth', 'login', '--claudeai'], { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); } catch { return { slug, state: 'failed', note: tr('server.account.noCli') }; }
-  logins.set(slug, L);
-  let out = '';
-  const seen = (d) => { out = (out + d).slice(-4000); const m = !L.url && /visit:\s*(https:\/\/\S+)/.exec(out); if (m) { L.url = m[1]; pushLogin(L); } };
-  L.child.stdout.on('data', seen); L.child.stderr.on('data', seen); L.child.stdin.on('error', () => {});
-  const look = setInterval(() => { try { const u = fs.readFileSync(urlFile, 'utf8').trim(); if (u && u !== L.url) { L.url = u; pushLogin(L); } } catch { /* not yet */ } }, 500);
-  const stop = setTimeout(() => L.child.kill(), 15 * 60e3);
-  L.child.on('error', () => { L.state = 'failed'; L.note = tr('server.account.noCli'); });
-  L.child.on('exit', (code) => {
-    clearInterval(look); clearTimeout(stop);
-    if (L.state === 'waiting') { L.state = code === 0 ? 'done' : 'failed'; if (code !== 0) L.note = clip(oneLine(out.trim().split('\n').filter(Boolean).pop() || ''), 140); }
-    scanAccounts(); pushLogin(L);
-  });
-  watchLogins();
-  return L;
-}
-let watchUntil = 0, watchTimer = null;
-function watchLogins() {   // every 4 s for 15 minutes: the new account appears in the card as soon as it has logged in
-  watchUntil = Date.now() + 15 * 60e3;
-  if (watchTimer) return;
-  watchTimer = setInterval(() => { scanAccounts(); if (Date.now() > watchUntil) { clearInterval(watchTimer); watchTimer = null; } }, 4000);
-  watchTimer.unref();
-}
-async function prepareAccount(name) {
-  const slug = slugOf(name);
-  if (!slug) return { ok: false, message: tr('server.account.badName') };
-  const dir = path.join(os.homedir(), `.claude-${slug}`), settings = path.join(dir, 'settings.json');
-  if (path.resolve(dir) === path.resolve(CLAUDE_DIR)) return { ok: false, message: tr('server.account.isMain') };
-  await fsp.mkdir(dir, { recursive: true });
-  let ownStatus = false;   // (a status line of its own there already: left alone)
-  try { ownStatus = !!JSON.parse(await fsp.readFile(settings, 'utf8')).statusLine; } catch { /* a new folder */ }
-  const res = await new Promise((resolve) => execFile(process.execPath, [path.join(ROOT, 'bin', 'cli.mjs'), 'install', '--settings', settings, ...(ownStatus ? ['--no-status'] : [])],
-    { timeout: 20000, env: { ...process.env, OFFICE_PORT: String(PORT) } }, (err) => resolve(!err)));
-  if (!res) return { ok: false, message: tr('server.account.installFailed') };
-  const done = loggedIn(dir), L = done ? null : startLogin(slug);
-  watchLogins();
-  return { ok: true, name: slug, dir: `~/.claude-${slug}`, loggedIn: done, login: L && { state: L.state, url: L.url || '', note: L.note || '' }, win: process.platform === 'win32', ...accountCmd(slug) };
-}
-let accountMtime = 0;
-setInterval(() => {   // /login to another account rewrites ~/.claude.json: notice within 15 s
-  fs.stat(ACCOUNT_FILE, (err, st) => {
-    if (err || st.mtimeMs === accountMtime) return;
-    accountMtime = st.mtimeMs;
-    const now = loginAccount(null).id;
-    if (planLimits?.account?.id && planLimits.account.id !== now) {
-      planLimits = null; usageNote = ['server.usage.newAccount'];
-      broadcast({ k: 'limits', limits: null, note: noteText() });
-      usageWait = 0; fetchPlanUsage(true);
-    }
-  });
-}, 15_000).unref();
-let usageSoon = 0;
-const usageAfterTurn = () => { clearTimeout(usageSoon); usageSoon = setTimeout(fetchPlanUsage, 15_000); };
-
-/* ---------- the accounts' names, and which account new sessions start on ----------
-   A name: the user's own, for the plan card (prefs accountNames, by the account's folder name; '' = the main one).
-   Which account: the one the user picked in the card (prefs accountPick, the main one by default), and with switching
-   on (prefs autoSwitch) the next one with room when it runs out, back to the picked one once it resets. The editors'
-   Claude Code extension starts the CLI through a little script of the office's (the editor's
-   claudeCode.claudeProcessWrapper), which sets CLAUDE_CONFIG_DIR to that account's folder (data/account-now; empty: the
-   main one). The other accounts' folders take the main one's projects, settings, skills… by links (SHARED), so a
-   session on any account has the same history, memory and settings. A running session stays on its account (Claude
-   Code reads its folder once, at start): when it runs out, closing and reopening it continues it on the one picked. */
-// (declared as functions: the first scan of the accounts, further up, already calls them)
-function acctLabel(slug) { return clip(String(prefs.get('accountNames')?.[slug] || ''), 24); }
-function acctShown(slug) { return acctLabel(slug) || slug || tr('server.account.main'); }
-function mainModel() {   // the model the sessions use (settings.json "model"): its own week counts too
-  if (Date.now() - modelAt > 60e3) { modelAt = Date.now(); try { modelNow = String(JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, 'settings.json'), 'utf8')).model || '').toLowerCase(); } catch { modelNow = ''; } }
-  return modelNow;
-}
-// until when an account can't take a new session: a limit nearly used up (5 hours, the week, the week of the model in
-// use), or a session just told it is out; 0: it has room
-function blockedUntil(windows, hit = 0) {
-  const now = Date.now(), model = mainModel();
-  let until = hit > now ? hit : 0;
-  for (const w of windows || []) {
-    if (!(w.pct >= FULL_PCT) || (w.resetsAt && w.resetsAt <= now)) continue;
-    if (w.key === 'session' || w.key === 'weekly' || (w.weekOf && model.includes(String(w.weekOf).toLowerCase()))) until = Math.max(until, w.resetsAt || now + 15 * 60e3);
-  }
-  return until;
-}
-function dirOfSlug(slug) { return otherDirs.find((d) => accName(d) === slug) || ''; }
-function nowSlug() { const d = nowDir && otherDirs.find((x) => path.resolve(x) === path.resolve(nowDir)); return d ? accName(d) : ''; }
-// the accounts top to bottom as the user ordered them in the card (prefs accountOrder; a new one goes last, the main one
-// first by default): new sessions start on the first, and with switching on move down the list when one runs out
-function orderOf() {
-  const all = ['', ...otherDirs.map(accName)], pick = prefs.get('accountPick');   // (accountPick: the one "Use" picked before there was an order)
-  const saved = (prefs.get('accountOrder') || (pick ? [pick] : [])).filter((s) => all.includes(s));
-  return [...new Set([...saved, ...all])];
-}
-function pickSlug() { return orderOf()[0] || ''; }
-function switching() { return !!prefs.get('autoSwitch') || !!pickSlug(); }
-function writeNow(dir) {
-  nowDir = dir;
-  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(NOW_FILE, `${dir}\n`); } catch { /* read-only data: the script keeps the last one */ }
-}
-// the first account in the user's order; with switching on, the first of them with room (none: stay)
-function repick(why = 'auto') {
-  if (!switching()) { if (nowDir) writeNow(''); return; }
-  const all = [{ slug: '', dir: '', until: blockedUntil(planLimits?.windows, hits.get('')) },
-    ...otherDirs.map((d) => ({ slug: accName(d), dir: d, until: blockedUntil(others.get(d)?.windows, hits.get(accName(d))) }))];
-  const order = orderOf(), list = [...all].sort((a, b) => order.indexOf(a.slug) - order.indexOf(b.slug));
-  const cur = all.find((a) => a.dir === nowDir), next = !prefs.get('autoSwitch') ? list[0] : list.find((a) => !a.until) || cur || list[0];
-  if (next.dir === nowDir && fs.existsSync(NOW_FILE)) return;
-  if (next.dir) shareWithMain(next.dir);
-  writeNow(next.dir);
-  if (cur !== next) broadcast({ k: 'acctswitch', why, from: cur ? acctShown(cur.slug) : '', to: acctShown(next.slug), until: cur?.until || 0 });
-  if (cur && cur !== next && cur.until) autoMoveSoon(cur.slug);
-  broadcast({ k: 'limits', limits: limitsOut(), note: noteText() });
-}
-setInterval(repick, 60_000).unref();   // (a reset time passing frees an account without a new reading)
-// a session was told "out of usage": its account waits for the latest reset among its limits that are nearly used up
-// (a few minutes when none is: a short rate limit), and is read again at once
-function limitHit(slug) {
-  const dir = dirOfSlug(slug), ws = slug ? others.get(dir)?.windows : planLimits?.windows, now = Date.now();
-  hits.set(slug, Math.max(0, ...(ws || []).filter((w) => w.pct >= 90 && w.resetsAt > now).map((w) => w.resetsAt)) || now + 5 * 60e3);
-  if (slug && dir) fetchOtherUsage(dir, true); else if (!slug) fetchPlanUsage(true);
-  repick();
-  const to = nowSlug();
-  return { to: prefs.get('autoSwitch') && to !== slug ? acctShown(to) : '' };
-}
-// an account's folder takes the main one's things by links; what it has of its own stays (only the office's own hooks
-// file, from adding the account, gives way to the main settings, which carry the same hooks)
-function shareWithMain(dir) {
-  if (!otherDirs.includes(dir)) return;
-  const officeOnly = (f) => { try {
-    const own = JSON.parse(fs.readFileSync(f, 'utf8')), main = fs.readFileSync(path.join(CLAUDE_DIR, 'settings.json'), 'utf8');
-    return Object.keys(own).every((k) => ['hooks', 'statusLine', '$schema'].includes(k)) && main.includes(`:${PORT}/event`);
-  } catch { return false; } };
-  for (const n of SHARED) {
-    const from = path.join(CLAUDE_DIR, n), to = path.join(dir, n);
-    if (!fs.existsSync(from)) continue;
-    try {
-      let st = null; try { st = fs.lstatSync(to); } catch { /* not there */ }
-      if (st?.isSymbolicLink()) continue;
-      if (st && n === 'settings.json' && officeOnly(to)) fs.renameSync(to, path.join(dir, 'settings.office-bak.json'));
-      else if (st && st.isDirectory() && !fs.readdirSync(to).length) fs.rmdirSync(to);
-      else if (st) continue;
-      fs.symlinkSync(from, to, process.platform === 'win32' && fs.statSync(from).isDirectory() ? 'junction' : undefined);
-    } catch { /* left as it is */ }
-  }
-  // the main account's own MCP servers (its .claude.json stays per account: it holds the login)
-  try {
-    const servers = JSON.parse(fs.readFileSync(ACCOUNT_FILE, 'utf8')).mcpServers, f = path.join(dir, '.claude.json'), acc = JSON.parse(fs.readFileSync(f, 'utf8'));
-    const merged = { ...(servers || {}), ...(acc.mcpServers || {}) };
-    if (servers && JSON.stringify(merged) !== JSON.stringify(acc.mcpServers || {})) { acc.mcpServers = merged; fs.writeFileSync(`${f}.office-tmp`, JSON.stringify(acc, null, 2), { mode: 0o600 }); fs.renameSync(`${f}.office-tmp`, f); }
-  } catch { /* not logged in yet, or busy */ }
-}
-// the script each new Claude Code goes through: the account picked, else what it would have used. A conversation moved
-// to another account (moveSession) is resumed by the editor with --resume=<its id>: that one starts on its own account.
-const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
-function switchScript() {
-  const pin = `${shq(PIN_DIR + path.sep)}"$sid"`;
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(SWITCH_FILE, [
-    '#!/bin/sh',
-    '# My Office: Claude Code started on the account the office picked (the plan card). The editor passes the claude',
-    '# program first (claudeCode.claudeProcessWrapper). A CLAUDE_CONFIG_DIR set already is kept. A conversation the office',
-    '# moved to another account (its id in data/resume-on) starts on that one when the editor resumes it.',
-    'if [ -z "$CLAUDE_CONFIG_DIR" ]; then',
-    '  sid= prev=',
-    '  for a in "$@"; do',
-    '    case "$a" in --resume=*) sid=${a#--resume=} ;; *) [ "$prev" = --resume ] && sid=$a ;; esac',
-    '    prev=$a',
-    '  done',
-    '  case "$sid" in *[!0-9A-Fa-f-]*) sid= ;; esac',
-    `  if [ -n "$sid" ] && [ -f ${pin} ]; then d=$(head -n 1 ${pin})`,
-    `  elif [ -r ${shq(NOW_FILE)} ]; then d=$(head -n 1 ${shq(NOW_FILE)})`,
-    '  else d=',
-    '  fi',
-    '  if [ -n "$d" ] && [ -d "$d" ]; then CLAUDE_CONFIG_DIR=$d; export CLAUDE_CONFIG_DIR; fi',
-    'fi',
-    '[ -t 0 ] && exec "$@"   # (in a terminal: Claude Code itself, as always)',
-    '# From the editor: Claude Code under this script, so that a conversation the office closes on purpose (carried on from',
-    '# a phone, moved to another account, closed when idle: its process id in data/closing) ends well for the editor rather',
-    '# than "exited with code 143". The editor\'s own stops are passed on. (Started with &, a program would ignore Ctrl+C:',
-    '# perl puts that back, then becomes Claude Code.)',
-    `if command -v perl >/dev/null 2>&1; then perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; exec { $ARGV[0] } @ARGV or exit 127' -- "$@" <&0 &`,
-    'else "$@" <&0 &',
-    'fi',
-    'child=$!',
-    `trap 'kill -TERM "$child" 2>/dev/null' TERM`,
-    "trap ':' INT",
-    `trap 'kill -HUP "$child" 2>/dev/null' HUP`,
-    'while :; do',
-    '  wait "$child"; status=$?',
-    '  kill -0 "$child" 2>/dev/null || break',
-    'done',
-    `if [ -f ${shq(CLOSING_DIR + path.sep)}"$child" ]; then rm -f ${shq(CLOSING_DIR + path.sep)}"$child"; exit 0; fi`,
-    'exit "$status"',
-    '',
-  ].join('\n'));
-  fs.chmodSync(SWITCH_FILE, 0o755);
-  return SWITCH_FILE;
-}
-const WRAP_KEY = 'claudeCode.claudeProcessWrapper';
-/* The Mac panel's Claude sessions, told apart the way you know them: the conversation's title, the app it runs in (the
-   editor whose extension runs it, else where Claude Code says it runs), the subagents at work, and the one you last wrote
-   to in the past three hours (closing that one ends the conversation you are in). The snapshot itself is shared: new rows. */
-function claudeRows(rows) {
-  const byPid = new Map([...sessions.values()].filter((s) => s.pid).map((s) => [s.pid, s]));
-  const you = [...byPid.values()].filter((s) => s.saidAt > Date.now() - 3 * 3600e3).sort((a, b) => b.saidAt - a.saidAt)[0];
-  return rows.map((c) => {
-    const s = byPid.get(c.pid), ed = editorByDot(c.editor);
-    return { ...c, title: s?.title || '', app: ed ? ed.label : s?.origin || '', agents: s ? Object.keys(s.subs).length : 0, you: !!s && s === you };
-  });
-}
-const editorSettings = () => claudeEditorSettings();
-// on: the office's script as each editor's wrapper (a wrapper of the user's own is left alone); off: taken out again.
-// -> [{ app, ok, other }] (ok false: a settings file the office can't read, e.g. with comments: the card shows the way by hand)
-function setEditorWrapper(on) {
-  if (process.platform === 'win32') return [];
-  const script = on ? switchScript() : SWITCH_FILE;
-  return editorSettings().map(({ app, file }) => {
-    let cfg = {}, real = file;
-    try { real = fs.realpathSync(file); const t = fs.readFileSync(real, 'utf8'); cfg = t.trim() ? JSON.parse(t) : {}; } catch (e) { if (e.code !== 'ENOENT') return { app, ok: false }; }
-    const cur = cfg[WRAP_KEY];
-    if (on ? cur === script : cur !== script) return { app, ok: true };
-    if (on && cur) return { app, ok: false, other: true };
-    if (on) cfg[WRAP_KEY] = script; else delete cfg[WRAP_KEY];
-    try { fs.mkdirSync(path.dirname(real), { recursive: true }); fs.writeFileSync(`${real}.office-tmp`, `${JSON.stringify(cfg, null, 4)}\n`); fs.renameSync(`${real}.office-tmp`, real); } catch { return { app, ok: false }; }
-    return { app, ok: true };
-  });
-}
-function autoOut() {
-  return { on: !!prefs.get('autoSwitch'), move: prefs.get('autoMove') !== false, resume: prefs.get('autoResume') !== false, pick: pickSlug(), order: orderOf(), now: nowSlug(), editors: editorsNow, script: SWITCH_FILE, alias: switchAlias, win: process.platform === 'win32' };
-}
-// the card's switch, "use this one" (it goes to the top) and the order dragged into place: the editors' script goes in
-// while switching is on, the top account isn't the main one or a moved conversation is still to start again, and out
-// again after. move: whether the conversations open on an account that runs out move too (on unless turned off);
-// resume: whether a moved one then goes on by itself on the new account (server/auto-resume.mjs; on unless turned off)
-function setSwitch({ auto, pick, order, move, resume } = {}) {
-  if (auto !== undefined) prefs.set('autoSwitch', auto || undefined);
-  if (move !== undefined) prefs.set('autoMove', move ? undefined : false);
-  if (resume !== undefined) prefs.set('autoResume', resume ? undefined : false);
-  if (pick !== undefined) order = [pick, ...orderOf().filter((s) => s !== pick)];
-  if (order !== undefined) { prefs.set('accountOrder', order); prefs.set('accountPick', undefined); }
-  const on = switching() || pinned().length > 0;
-  editorsNow = setEditorWrapper(on);
-  const bin = on && findClaude();
-  switchAlias = bin ? `alias claude='${SWITCH_FILE} "${bin.file}"'` : '';
-  if (on && prefs.get('autoSwitch')) for (const d of otherDirs) shareWithMain(d);
-  repick(pick !== undefined || order !== undefined ? 'pick' : 'auto');
-  broadcast({ k: 'limits', limits: limitsOut(), note: noteText() });
-  return { ok: true, ...autoOut() };
-}
-if (switching() || pinned().length) setSwitch();   // (the script written again, in case the office moved)
-
-/* ---------- an open conversation, to another account ----------
-   Claude Code reads its account once, at start, so a conversation stays on its account while its process lives. The
-   editor's extension starts a new process for a conversation whose process has gone, with --resume=<its id>, as soon
-   as you write in it again, and through the office's script: so the office notes the account for that conversation
-   (data/resume-on/<id>, read by the script) and stops its process while it rests, the same safe way as "Close session"
-   (only the process seen, matched by its start time; never one at work). The conversation is the same file on every
-   account (projects/ is shared by a link), so it goes on where it was, on the new account. Its person stays at the desk
-   meanwhile (parked) and is the same person when it starts again. A session in a terminal can't be started again from
-   here: the command that resumes it there is handed back instead. With switching on, the conversations resting on an
-   account out for a while move by themselves to the one new sessions start on now (autoMove). */
-const SID_RE = /^[0-9a-f-]{36}$/i;
-function pinned() { try { return fs.readdirSync(PIN_DIR).filter((f) => SID_RE.test(f)); } catch { return []; } }
-const homeOf = (slug) => (slug ? dirOfSlug(slug) : CLAUDE_DIR);
-function sharesHistory(slug) { try { return fs.realpathSync(path.join(homeOf(slug), 'projects')) === fs.realpathSync(path.join(CLAUDE_DIR, 'projects')); } catch { return false; } }
-const untilOf = (slug) => blockedUntil(slug ? others.get(dirOfSlug(slug))?.windows : planLimits?.windows, hits.get(slug));
-async function moveSession(s, to, why = 'you') {
-  if (s.moving) return { ok: false, message: tr('server.move.busy') };
-  s.moving = true;
-  try { return await moveNow(s, to, why); } finally { s.moving = false; }
-}
-async function moveNow(s, to, why) {
-  const from = acctOf(s), name = s.title || s.name;
-  if (!s.pid || !s.sid || !SID_RE.test(s.sid) || s.parked) return { ok: false, message: tr('server.move.notOpen') };
-  if (to && !dirOfSlug(to)) return { ok: false, message: tr('server.move.noAccount') };
-  if (to === from) return { ok: false, message: tr('server.move.same', { to: acctShown(to) }) };
-  if (s.status !== 'rest' || s.busy || [...pending.values()].some((p) => p.sess === s.id)) return { ok: false, message: tr('server.move.busy') };
-  if (to) shareWithMain(dirOfSlug(to));
-  if (!sharesHistory(from) || !sharesHistory(to)) return { ok: false, message: tr('server.move.noShare') };
-  if (s.entry !== 'claude-vscode') {
-    const cmd = `cd ${shq(s.cwd)} && ${to ? `CLAUDE_CONFIG_DIR=${shq(dirOfSlug(to))} ` : ''}claude --resume ${s.sid}`;
-    return { ok: true, terminal: true, cmd, message: tr('server.move.terminal', { to: acctShown(to) }) };
-  }
-  // the script in the editor that hosts it (else in any), or the new start would not go through it
-  const eds = setEditorWrapper(true), host = eds.find((e) => e.app === s.origin);
-  if (!(host ? host.ok : eds.some((e) => e.ok))) return { ok: false, message: tr('server.move.noScript') };
-  editorsNow = eds;
-  const proc = (await sysSnapshot().catch(() => null))?.claude?.find((c) => c.pid === s.pid);
-  if (!proc) return { ok: false, message: tr('server.move.notOpen') };
-  const pin = path.join(PIN_DIR, s.sid);
-  try { fs.mkdirSync(PIN_DIR, { recursive: true }); fs.writeFileSync(pin, `${to ? dirOfSlug(to) : ''}\n`); } catch { return { ok: false, message: tr('server.move.failed') }; }
-  s.parked = { to, at: Date.now() };   // (before the process goes: the scan must not see it leave)
-  closingOnPurpose([s.pid]);
-  const r = await sysAction({ action: 'closeIdle', items: [{ target: s.pid, start: proc.start }] }).catch(() => null);
-  if (!r?.closed?.length) { delete s.parked; fs.rmSync(pin, { force: true }); return { ok: false, message: tr('server.move.failed') }; }
-  s.pid = null;
-  chat.onMoved(s.id, acctShown(to));
-  fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} move ${name} ${from || 'main'} -> ${to || 'main'} (${why})\n`).catch(() => {});
-  broadcast({ k: 'sess', s: pub(s) });
-  return { ok: true, name, to: acctShown(to), message: tr('server.move.done', { name, to: acctShown(to) }) };
-}
-// a moved conversation going on by itself on the new account (server/auto-resume.mjs)
-const autoResume = createAutoResume({ findClaude, dirOfSlug, prefs, pinDir: PIN_DIR, spawn, prompt: () => tr('server.move.resumePrompt'),
-  log: (msg) => fsp.appendFile(ACTION_LOG, msg).catch(() => {}) });
-// switching on: the editor's conversations resting on an account out for a while (not a short rate limit) move to the
-// one new sessions start on now, if it has room. Called a few seconds after the account ran out (the session that
-// hit the limit needs a moment to rest), and once more a little later for one that was still finishing.
-async function autoMove(slug) {
-  const to = nowSlug(), now = Date.now();
-  if (!prefs.get('autoSwitch') || prefs.get('autoMove') === false || to === slug || untilOf(slug) - now < 15 * 60e3 || untilOf(to)) return;
-  const moved = [];
-  for (const s of [...sessions.values()]) {
-    if (acctOf(s) !== slug || s.entry !== 'claude-vscode' || s.status !== 'rest' || s.parked || !s.pid) continue;
-    const r = await moveSession(s, to, 'auto');
-    if (r.ok) { moved.push(r.name); autoResume.resumeSession(s, to); }   // (and on with it there, unless turned off)
-  }
-  if (moved.length) broadcast({ k: 'acctmove', names: moved, from: acctShown(slug), to: acctShown(to) });
-}
-function autoMoveSoon(slug) { for (const ms of [5000, 30000]) setTimeout(() => { autoMove(slug).catch(() => {}); }, ms).unref(); }
-// and every minute while an account stays out: a conversation that was busy when it ran out (a long turn, agents of its
-// own running in the background) moves as soon as it comes to rest
-setInterval(() => { for (const slug of ['', ...otherDirs.map(accName)]) if (untilOf(slug) - Date.now() >= 15 * 60e3) autoMove(slug).catch(() => {}); }, 60_000).unref();
-// a parked conversation started again (the same id, a new process): the note is spent. Notes left for a day go.
-function unpark(s) {
-  if (!s.parked) return;
-  s.transcript = path.join(homeOf(s.parked.to), 'projects', s.cwd.replace(/[^A-Za-z0-9-]/g, '-'), `${s.sid}.jsonl`);
-  delete s.parked;
-  fs.rmSync(path.join(PIN_DIR, s.sid), { force: true });
-}
-setInterval(() => {
-  for (const f of pinned()) { try { const p = path.join(PIN_DIR, f); if (Date.now() - fs.statSync(p).mtimeMs > PARK_MS) fs.rmSync(p, { force: true }); } catch { /* gone */ } }
-}, 3600e3).unref();
 
 /* ---------- the other AI tools' accounts: Codex and Antigravity IDE (server/codex-accounts.mjs, antigravity-accounts.mjs) ----------
    Their accounts in the plan card under Claude's: each one's usage, which one is in use, adding one, using another, and
@@ -2368,7 +1799,8 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/doctor') {
     if (!isLoopback(req)) { res.writeHead(403).end(); return; }
-    json(res, 200, { uptime: Math.round((Date.now() - startedAt) / 1000), lastEventAt: lastHookAt, sessions: sessions.size, pending: pending.size, node: process.versions.node, statusAt, limitsAt: planLimits?.at || 0, limitsSource: planLimits?.source || null, usageNote: noteText(), otel: otel.info(), agents: tasksOut(true).agents.map((a) => ({ ...a, lastEventAt: agentHookAt.get(a.id) || 0, sessions: [...sessions.values()].filter((s) => (s.agent || 'claude') === a.id).length })) });
+    const lim = getPlanLimits();
+    json(res, 200, { uptime: Math.round((Date.now() - startedAt) / 1000), lastEventAt: lastHookAt, sessions: sessions.size, pending: pending.size, node: process.versions.node, statusAt, limitsAt: lim?.at || 0, limitsSource: lim?.source || null, usageNote: noteText(), otel: otel.info(), agents: tasksOut(true).agents.map((a) => ({ ...a, lastEventAt: agentHookAt.get(a.id) || 0, sessions: [...sessions.values()].filter((s) => (s.agent || 'claude') === a.id).length })) });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/hook/question') {
@@ -3106,13 +2538,13 @@ function setModels({ main, sub, force, split }) {
     const set = readReal(CC_SETTINGS); let cfg;
     try { cfg = JSON.parse(set.text === null ? 'x' : set.text || '{}'); } catch { return { ok: false, message: tr('server.models.unreadable') }; }   // (one with comments: left alone)
     if (!writeReal(set.real, `${JSON.stringify(withModels(cfg, { main, sub, force }), null, 2)}\n`)) return { ok: false, message: tr('server.models.failed') };
-    modelAt = 0;   // (the plan card's model week follows at once)
+    resetModelCache();   // (the plan card's model week follows at once)
   }
   if (split !== undefined) {
     const mem = readReal(CC_MEMORY); if (mem.text === null) return { ok: false, message: tr('server.models.failed') };
     const next = withSplit(mem.text, split, tr('server.models.splitNote'));
     if (next !== mem.text && !writeReal(mem.real, next)) return { ok: false, message: tr('server.models.failed') };
-    if (split) for (const d of otherDirs) shareWithMain(d);   // (an account added before there was a CLAUDE.md: linked now)
+    if (split) for (const d of getOtherDirs()) shareWithMain(d);   // (an account added before there was a CLAUDE.md: linked now)
   }
   const out = modelsOut();
   fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} models main=${out.main || 'default'} sub=${out.sub || 'same'}${out.force ? ' (forced)' : ''} split=${out.split ? 'on' : 'off'}\n`).catch(() => {});
