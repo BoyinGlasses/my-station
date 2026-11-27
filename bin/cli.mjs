@@ -77,8 +77,20 @@ const SERVER = path.join(ROOT, 'server', 'index.mjs');
 // The page is a Next.js build: make it once (and after an update) before the server can show the office.
 function ensureBuild() {
   if (fs.existsSync(path.join(ROOT, '.next', 'BUILD_ID'))) return;
+  if (!fs.existsSync(path.join(ROOT, 'app'))) throw new Error('Prebuilt UI (.next/BUILD_ID) is missing from this installation. Reinstall or run `npm run build` from a source checkout.');
   console.log(tr('cli.building'));
   execFileSync(process.execPath, [path.join(ROOT, 'node_modules', 'next', 'dist', 'bin', 'next'), 'build'], { cwd: ROOT, stdio: 'inherit', env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1' } });
+}
+async function finishInstall() {
+  if (args.includes('--service') && !opt('--settings')) {
+    await fsp.mkdir(dataDir(ROOT, {}), { recursive: true });
+    ensureBuild();
+    const svc = service();
+    if (await svc.install()) ok(tr('cli.install.service', { file: svc.file })); else warn(tr('cli.install.noService'));
+    LAN ? warn(tr('cli.install.lan')) : ok(tr('cli.install.local'));
+  }
+  if (!args.includes('--no-panel') && !opt('--settings')) await panel();
+  if (!args.includes('--no-menubar') && !opt('--settings') && process.platform === 'darwin') menubar();
 }
 
 async function install() {
@@ -117,15 +129,7 @@ async function install() {
   if (added || otel.added) { await writeSettings(cfg); if (added) ok(tr('cli.install.added', { n: added, file: SETTINGS })); } else ok(tr('cli.install.already'));
   if (otel.added) ok(tr('cli.install.otel', { file: SETTINGS }));
   if (otel.theirs) { warn(tr('cli.install.otelTheirs', { where: otel.theirs.join('; ') })); console.log(`\n${collectorSnippet(PORT).replace(/^/gm, '    ')}\n`); }
-  if (args.includes('--service') && !opt('--settings')) {
-    await fsp.mkdir(dataDir(ROOT, {}), { recursive: true });
-    ensureBuild();
-    const svc = service();
-    if (await svc.install()) ok(tr('cli.install.service', { file: svc.file })); else warn(tr('cli.install.noService'));
-    LAN ? warn(tr('cli.install.lan')) : ok(tr('cli.install.local'));
-  }
-  if (!args.includes('--no-panel') && !opt('--settings')) await panel();
-  if (!args.includes('--no-menubar') && !opt('--settings') && process.platform === 'darwin') menubar();
+  await finishInstall();
   console.log(`\n${tr('cli.install.next', { port: PORT })}`);
 }
 /* The Mac's menu bar icon (menubar/MyOfficeBar.swift): built here with the Swift compiler of Xcode's command line tools
@@ -225,6 +229,7 @@ async function installAntigravity() {
   }
   if (JSON.stringify(cfg['my-office']) !== JSON.stringify(hook)) { cfg['my-office'] = hook; await writeSettings(cfg); }
   console.log(`Antigravity: hooks installed in ${SETTINGS}.`);
+  await finishInstall();
 }
 async function uninstallAntigravity() {
   const cfg = await readSettings();
@@ -248,6 +253,7 @@ async function installZCode() {
   }
   if (added) await writeSettings(cfg);
   console.log(`ZCode: ${added ? `installed ${added} hooks in ${SETTINGS}` : 'hooks already installed'}.`);
+  await finishInstall();
 }
 async function uninstallZCode() {
   const cfg = await readSettings(); let removed = 0;
@@ -281,7 +287,7 @@ async function installOpenCode() {
   try {
     const old = await fsp.readFile(SETTINGS, 'utf8');
     if (!officePlugin(old)) throw new Error(`Refusing to overwrite existing plugin: ${SETTINGS}`);
-    if (old === text) return console.log('OpenCode: plugin already installed.');
+    if (old === text) { console.log('OpenCode: plugin already installed.'); await finishInstall(); return; }
     await fsp.copyFile(SETTINGS, `${SETTINGS}.backup-${new Date().toISOString().replace(/[:.]/g, '-')}`);
     await fsp.writeFile(SETTINGS, text);
   } catch (e) {
@@ -289,6 +295,7 @@ async function installOpenCode() {
     await fsp.writeFile(SETTINGS, text, { flag: 'wx' });
   }
   console.log(`OpenCode: installed ${SETTINGS}. Restart OpenCode to load it.`);
+  await finishInstall();
 }
 async function uninstallOpenCode() {
   try { if (officePlugin(await fsp.readFile(SETTINGS, 'utf8'))) await fsp.unlink(SETTINGS); }
@@ -312,6 +319,7 @@ async function installCodex() {
   }
   if (added) await writeSettings(cfg);
   console.log(`Codex: ${added ? `installed ${added} hooks in ${SETTINGS}` : 'hooks already installed'}. Codex may require trusting these hooks.`);
+  await finishInstall();
 }
 async function uninstallCodex() {
   const cfg = await readSettings(); let removed = 0;
@@ -333,7 +341,7 @@ async function uninstallCodex() {
 // or Claude Code wouldn't start once the office is gone
 function unwrapEditors() {
   const script = path.join(DATA_DIR, 'claude-switch.sh'), home = os.homedir(), key = 'claudeCode.claudeProcessWrapper';
-  const base = process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support') : path.join(home, '.config');
+  const base = process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support') : process.platform === 'win32' ? (process.env.APPDATA || path.join(home, 'AppData', 'Roaming')) : path.join(home, '.config');
   let n = 0;
   for (const app of ['Code', 'Code - Insiders', 'Cursor', 'Windsurf', 'Antigravity', 'Antigravity IDE', 'Kiro', 'Trae', 'Positron']) {
     try {
