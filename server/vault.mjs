@@ -10,6 +10,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import zlib from 'node:zlib';
 import { promisify } from 'node:util';
+import { redact } from './redact.mjs';
 
 const gzip = promisify(zlib.gzip), gunzip = promisify(zlib.gunzip);
 const SID = /^[\w-]{8,80}$/;
@@ -41,10 +42,11 @@ export async function readTranscript(file) {
     if (j.type === 'user') { r = 'u'; t = cleanPrompt(typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b) => b?.type === 'text').map((b) => b.text).join('\n') : ''); if (/^\[Request interrupted/.test(t)) t = ''; ph = Array.isArray(c) ? c.filter((b) => b?.type === 'image').length : 0; }
     else if (j.type === 'assistant') { r = 'c'; t = Array.isArray(c) ? c.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim() : ''; }
     if (!t) continue;
+    t = redact(t);
     if (at) { out.start ||= at; out.end = Math.max(out.end, at); }
     if (out.msgs.length < MAX_MSGS) out.msgs.push({ r, t: t.length > MAX_TEXT ? `${t.slice(0, MAX_TEXT)}…` : t, at, ...(ph && { ph }) });
   }
-  out.title = (custom ?? ai ?? '').trim();
+  out.title = redact((custom ?? ai ?? '').trim());
   return out;
 }
 
