@@ -8,15 +8,19 @@ import { createAntigravityAccounts, makeDb, KEYS, tokenOf, statusOf, pickedModel
 
 import { token, status, prefs, RESET } from '../e2e/fake-antigravity.mjs';
 
-let sqlite = true;
-try { execFileSync('sqlite3', ['-version'], { stdio: 'ignore' }); } catch { sqlite = false; }
+let DatabaseSync = null;
+try { ({ DatabaseSync } = await import('node:sqlite')); } catch { /* Node < 22.5 */ }
+let sqlite = !!DatabaseSync;
+if (!sqlite) { try { execFileSync('sqlite3', ['-version'], { stdio: 'ignore' }); sqlite = true; } catch { sqlite = false; } }
 
-function setup() {
+function setup(t, opts = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'office-ag-')), file = path.join(root, 'state.vscdb');
-  execFileSync('sqlite3', [file, 'CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB);']);
-  const db = makeDb(file), ide = { open: false, quits: 0, launches: 0, busy: 0, away: false, clock: Date.now(), quiet: [] }, changes = [];
-  const ag = createAntigravityAccounts({ dir: path.join(root, 'office'), db: () => db, busyIn: async () => ide.busy, away: async () => ide.away, now: () => ide.clock, onChange: (w) => changes.push(w || {}),
-    app: { name: 'Fake IDE', running: async () => ide.open, quit: async (o) => { ide.quits++; ide.quiet.push(!!o?.quiet); ide.open = false; return true; }, launch: async () => { ide.launches++; ide.open = true; return true; } } });
+  t?.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  if (DatabaseSync) { const conn = new DatabaseSync(file); conn.exec('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB);'); conn.close(); }
+  else execFileSync('sqlite3', [file, 'CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB);']);
+  const db = makeDb(file), ide = { open: false, quits: 0, launches: 0, checks: 0, busy: 0, away: false, clock: Date.now(), quiet: [] }, changes = [];
+  const ag = createAntigravityAccounts({ dir: path.join(root, 'office'), db: () => db, busyIn: async () => ide.busy, away: async () => ide.away, now: () => ide.clock, onChange: (w) => changes.push(w || {}), ...opts,
+    app: { name: 'Fake IDE', running: async () => { ide.checks++; return ide.open; }, quit: async (o) => { ide.quits++; ide.quiet.push(!!o?.quiet); ide.open = false; return true; }, launch: async () => { ide.launches++; ide.open = true; return true; } } });
   const signIn = (who, left) => db.write({ [KEYS.token]: token(who), [KEYS.status]: status(who, left), [KEYS.prefs]: prefs(1319) });
   const seatWho = async () => tokenOf((await db.read([KEYS.token]))[KEYS.token])?.access.slice(5);
   return { ag, db, ide, changes, signIn, seatWho };
@@ -39,8 +43,8 @@ test('the IDE\'s records: the sign-in, the account and its quotas, the model in 
   assert.equal(tokenOf('not base64 protobuf'), null);
 });
 
-test('accounts as they sign in, a switch with the IDE closed, one waiting for it to close, one closing and reopening it', { skip: !sqlite && 'no sqlite3' }, async () => {
-  const { ag, ide, changes, signIn, seatWho } = setup();
+test('accounts as they sign in, a switch with the IDE closed, one waiting for it to close, one closing and reopening it', { skip: !sqlite && 'no sqlite' }, async (t) => {
+  const { ag, ide, changes, signIn, seatWho } = setup(t);
   await signIn('a'); await ag.scan();
   const a = idOf(ag, 'a');
   assert.ok(a); assert.equal(ag.out().now, a); assert.equal(ag.out().picked, 'Gemini 3.8 Flash');
@@ -70,8 +74,8 @@ test('accounts as they sign in, a switch with the IDE closed, one waiting for it
   ag.stop();
 });
 
-test('switching by itself when the model in use runs out, and adding an account', { skip: !sqlite && 'no sqlite3' }, async () => {
-  const { ag, db, ide, signIn, seatWho } = setup();
+test('switching by itself when the model in use runs out, and adding an account', { skip: !sqlite && 'no sqlite' }, async (t) => {
+  const { ag, db, ide, signIn, seatWho } = setup(t);
   await signIn('b'); await ag.scan();
   await signIn('a'); await ag.scan();
   const [a, b] = [idOf(ag, 'a'), idOf(ag, 'b')];
@@ -109,8 +113,8 @@ test('the windows the IDE had open: every folder once, the one in front last; no
   assert.deepEqual(windowsOf({}), []);
 });
 
-test('the IDE open: nearly out, the switch waits for you to be away, then happens quietly', { skip: !sqlite && 'no sqlite3' }, async () => {
-  const { ag, ide, changes, signIn, seatWho } = setup();
+test('the IDE open: nearly out, the switch waits for you to be away, then happens quietly', { skip: !sqlite && 'no sqlite' }, async (t) => {
+  const { ag, ide, changes, signIn, seatWho } = setup(t);
   await signIn('b'); await ag.scan();
   await signIn('a'); await ag.scan();
   const [a, b] = [idOf(ag, 'a'), idOf(ag, 'b')];
@@ -127,5 +131,20 @@ test('the IDE open: nearly out, the switch waits for you to be away, then happen
   assert.deepEqual([ide.quits, ide.launches, ide.quiet], [1, 1, [true]]);
   assert.equal(await seatWho(), 'b'); assert.equal(ag.out().now, b); assert.equal(ag.out().pending, null);
   assert.ok(changes.some((w) => w.switched?.when === 'away' && w.switched.from === a && w.switched.to === b));
+  ag.stop();
+});
+
+test('idle scans throttle app.running() when no office viewer is connected', { skip: !sqlite && 'no sqlite' }, async (t) => {
+  const { ag, ide, signIn } = setup(t, { watching: () => false });
+  await signIn('a');
+  await ag.scan();
+  assert.equal(ide.checks, 1);
+  // Repeated scans within 60 s with unchanged DB and no pending switch do not re-poll app.running().
+  ide.clock += 4000; await ag.scan();
+  ide.clock += 4000; await ag.scan();
+  assert.equal(ide.checks, 1);
+  // After 60 s, periodic check runs once.
+  ide.clock += 60_000; await ag.scan();
+  assert.equal(ide.checks, 2);
   ag.stop();
 });

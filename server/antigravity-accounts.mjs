@@ -104,12 +104,27 @@ export function windowsOf(storage) {
   return list.flatMap((u) => { try { return [fileURLToPath(u)]; } catch { return []; } });   // (one another system wrote: left out)
 }
 
-/* ---------- the IDE's database, through the sqlite3 program ---------- */
+/* ---------- the IDE's database: Node's built-in node:sqlite when present, else the sqlite3 program ---------- */
 const sq = (s) => `'${String(s).replace(/'/g, "''")}'`;
+let nodeSqlite;
+const loadSqlite = () => (nodeSqlite ??= import('node:sqlite').then((m) => m.DatabaseSync || null).catch(() => null));
 export function makeDb(file, sqlite = 'sqlite3') {
+  const tryNative = sqlite === 'sqlite3';
   return {
     file,
     async read(keys) {   // -> { key: value }, null when the database can't be read
+      if (tryNative && keys.length) {
+        const DatabaseSync = await loadSqlite();
+        if (DatabaseSync) {
+          let conn;
+          try {
+            conn = new DatabaseSync(file, { readOnly: true });
+            const placeholders = keys.map(() => '?').join(', ');
+            const rows = conn.prepare(`SELECT key, CAST(value AS TEXT) AS value FROM ItemTable WHERE key IN (${placeholders})`).all(...keys);
+            return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+          } catch { /* fall through to sqlite3 CLI */ } finally { try { conn?.close(); } catch { /* ignore */ } }
+        }
+      }
       return new Promise((resolve) => execFile(sqlite, ['-readonly', '-json', file, `SELECT key, CAST(value AS TEXT) AS value FROM ItemTable WHERE key IN (${keys.map(sq).join(', ')})`],
         { timeout: 10_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, out) => {
           if (err) { resolve(null); return; }
@@ -117,6 +132,22 @@ export function makeDb(file, sqlite = 'sqlite3') {
         }));
     },
     async write(set, drop = []) {   // values to set, keys to take out: one transaction
+      if (tryNative) {
+        const DatabaseSync = await loadSqlite();
+        if (DatabaseSync) {
+          let conn;
+          try {
+            conn = new DatabaseSync(file);
+            conn.exec('BEGIN');
+            const put = conn.prepare('INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)');
+            for (const [k, v] of Object.entries(set)) put.run(k, v);
+            const del = conn.prepare('DELETE FROM ItemTable WHERE key = ?');
+            for (const k of drop) del.run(k);
+            conn.exec('COMMIT');
+            return true;
+          } catch { try { conn?.exec('ROLLBACK'); } catch { /* ignore */ } /* fall through */ } finally { try { conn?.close(); } catch { /* ignore */ } }
+        }
+      }
       const sql = ['BEGIN;', ...Object.entries(set).map(([k, v]) => `INSERT OR REPLACE INTO ItemTable (key, value) VALUES (${sq(k)}, ${sq(v)});`), ...drop.map((k) => `DELETE FROM ItemTable WHERE key = ${sq(k)};`), 'COMMIT;'].join('\n');
       return new Promise((resolve) => {
         let child; try { child = spawn(sqlite, [file], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true }); } catch { resolve(false); return; }
@@ -129,10 +160,10 @@ export function makeDb(file, sqlite = 'sqlite3') {
 
 /**
  * @param {{ dir: string, db: () => ReturnType<typeof makeDb> | null, app: { name: string, running: () => Promise<boolean>, quit?: (o?: { quiet?: boolean }) => Promise<boolean>, launch?: (o?: { quiet?: boolean }) => Promise<boolean> },
- *   busyIn?: () => Promise<number>, away?: () => Promise<boolean>, awayMin?: number, now?: () => number, log?: (s: string) => void, onChange?: (what?: object) => void }} o
+ *   busyIn?: () => Promise<number>, away?: () => Promise<boolean>, awayMin?: number, watching?: () => boolean, now?: () => number, log?: (s: string) => void, onChange?: (what?: object) => void }} o
  * away: you are away from the computer and nothing is at work in the IDE (a quiet moment to switch in)
  */
-export function createAntigravityAccounts({ dir, db, app, busyIn = async () => 0, away = async () => false, awayMin = 10, now = Date.now, log = () => {}, onChange = () => {} }) {
+export function createAntigravityAccounts({ dir, db, app, busyIn = async () => 0, away = async () => false, awayMin = 10, watching = () => true, now = Date.now, log = () => {}, onChange = () => {} }) {
   const FILE = path.join(dir, 'accounts.json');
   /** list: [{ id, key, email, name, tier, tierName, label, token, status, models, at }]; pending: the account to switch to
    *  at the next quiet moment; away: the office may close and open the IDE then (while you are away) */
@@ -144,12 +175,12 @@ export function createAntigravityAccounts({ dir, db, app, busyIn = async () => 0
   const keyOf = (token) => { const t = tokenOf(token); return t?.refresh ? crypto.createHash('sha256').update(t.refresh).digest('hex').slice(0, 16) : null; };
   // what was read last; fits: the status in the database is the signed-in account's (after a new sign-in it is still the
   // previous account's until the IDE fetches the new one, which changes it)
-  let seen = { token: null, status: null, key: null, fits: true }, seatId = null, picked = 0, running = false, note = '', adding = null, busyMove = false, mtime = 0;
+  let seen = { token: null, status: null, key: null, fits: true }, seatId = null, picked = 0, running = false, note = '', adding = null, busyMove = false, mtime = 0, idleCheckAt = 0, tickAt = 0;
 
   async function scan() {
     const d = db(); if (!d) { note = 'noDb'; return; }
     let m = 0; try { m = fs.statSync(d.file).mtimeMs; } catch { /* gone */ }
-    if (m && m === mtime && seen.token !== null) return idle();   // (nothing written since the last reading)
+    if (m && m === mtime && (seen.token !== null || note === 'noDb')) return idle();   // (nothing written since the last reading)
     const v = await d.read([KEYS.token, KEYS.status, KEYS.prefs]);
     mtime = m;
     if (!v) { if (note !== 'noDb') { note = 'noDb'; onChange(); } return; }
@@ -188,6 +219,10 @@ export function createAntigravityAccounts({ dir, db, app, busyIn = async () => 0
   }
   // whether the IDE is open; a switch waiting for it to close, or due because the account in use ran out
   async function idle() {
+    const t = now();
+    // Avoid polling the host process list every 4 s when nobody is looking and no switch/sign-in is active.
+    if (!watching() && !st.pending && !adding && idleCheckAt && t - idleCheckAt < 60_000) return;
+    idleCheckAt = t;
     const was = running; running = await app.running().catch(() => false);
     if (running !== was) onChange();
     if (busyMove) return;
@@ -323,7 +358,13 @@ export function createAntigravityAccounts({ dir, db, app, busyIn = async () => 0
   const timers = [];
   function start() {
     scan().catch(() => {});
-    timers.push(setInterval(() => { if (!busyMove) scan().catch(() => {}); }, 4000));
+    timers.push(setInterval(() => {
+      if (busyMove) return;
+      const t = now();
+      if (!watching() && !st.pending && !adding && t - tickAt < 30_000) return;
+      tickAt = t;
+      scan().catch(() => {});
+    }, 4000));
     for (const x of timers) x.unref?.();
   }
   function stop() { for (const x of timers) clearInterval(x); }
