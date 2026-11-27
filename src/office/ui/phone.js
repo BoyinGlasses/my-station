@@ -11,6 +11,7 @@ import { icon } from './icons.js';
 import { closeSession, drM, drS } from './session-drawer.js';
 import { closeMac } from './mac-drawer.js';
 import { closeBurn } from './burn.js';
+import { closeVault } from './vault.js';
 import { togglePlan, togglePop } from './settings.js';
 import { setHome, setupHome } from './phone-home.js';
 import { t as tr } from '../../i18n/index.js';
@@ -28,6 +29,7 @@ function closeSheets(but = '') {
   if (!drS.hidden) closeSession();
   if (!drM.hidden) closeMac();
   closeBurn();
+  closeVault();
   togglePlan(false); togglePop(false);
   if (but !== 'sessions') document.querySelector('.side-left')?.classList.remove('ph-open');
   if (but !== 'activity') $('feed')?.classList.remove('ph-open');

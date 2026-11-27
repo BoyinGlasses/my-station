@@ -7,6 +7,8 @@ import { night, setNight } from '../world/room-update.js';
 import { toast } from './activity.js';
 import { closeSession, drM, drS, openSession } from './session-drawer.js';
 import { closeMac } from './mac-drawer.js';
+import { closeVault, drV } from './vault.js';
+import { TOKEN } from '../net/live.js';
 import { closePlace, plcState } from '../interact/place-cards.js';
 import { popLook, togglePlan, togglePop } from './settings.js';
 import { exitFp, fp } from '../interact/first-person.js';
@@ -25,7 +27,8 @@ export function notifyWait(s, e) {
 /* ---------- the phone window: the two ways in (the home network, or anywhere through the Cloudflare tunnel) as tabs, each
    with its switch, its QR code and address; the PIN; and what phones may do (approve, give Claude work, Remote Control),
    each a switch with a line on what it means. Everything is switched here, on the Mac: nothing to type in a terminal. ---------- */
-const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()).catch(() => null);
+const tq = (u) => `${u}${TOKEN ? `${u.includes('?') ? '&' : '?'}k=${encodeURIComponent(TOKEN)}` : ''}`;
+const post = (url, body) => fetch(tq(url), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()).catch(() => null);
 // a row with a switch: what it is (bold), a line on what it means, the switch on the right
 function phoneSwitch(text, on, disabled, fn, desc = '') {
   const row = el('label', 'pm-approve pm-toggle'), cb = el('input'), words = el('span', 'pm-tt');
@@ -40,7 +43,7 @@ const pinFmt = (p) => (p.length % 4 === 0 && p.length % 3 ? p.match(/\d{4}/g).jo
 let tun = null, tunPoll = 0;   // the tunnel's state (GET /api/tunnel), asked again while it starts
 let pmTab = null;              // the way in shown: 'home' | 'away' (null: the tunnel's if it is on)
 async function loadTunnel() {
-  tun = await fetch('/api/tunnel').then((r) => r.json()).catch(() => null);
+  tun = await fetch(tq('/api/tunnel')).then((r) => r.json()).catch(() => null);
   clearTimeout(tunPoll);
   const setting = tun?.domain && !['done', 'error'].includes(tun.domain.state);   // (a fixed address being set up)
   if (tun && (['download', 'starting'].includes(tun.state) || setting) && !$('phone-modal').hidden) tunPoll = setTimeout(() => loadTunnel().then(renderPhone), setting ? 2000 : 1500);
@@ -162,7 +165,7 @@ export function renderPhone() {
   body.append(el('h4', 'pm-h', tr('topbar.phone.mayTitle')), list);
   // the phones that get notifications (switched on on each phone), and one to all of them
   const pushRow = el('div', 'pm-pushrow'); body.append(pushRow);
-  fetch('/api/push').then((r) => r.json()).then((j) => {
+  fetch(tq('/api/push')).then((r) => r.json()).then((j) => {
     pushRow.append(el('span', 'muted', j.count ? tr('topbar.phone.pushCount', { n: j.count }) : tr('topbar.phone.pushNone')));
     if (!j.count) return;
     const t = el('button', 'btn btn--sm', tr('topbar.phone.notifyTest')); t.type = 'button';
@@ -251,7 +254,7 @@ export function setup() {
   });
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
-    if (!$('tl').hidden) closeTimeline(); else if (plcState.id) closePlace(); else if (!popLook.hidden) togglePop(false); else if (!$('pop-plan').hidden) togglePlan(false); else if (!$('phone-modal').hidden) $('phone-modal').hidden = true; else if (!drS.hidden) closeSession(); else if (!drM.hidden) closeMac(); else if (fp.on) exitFp();
+    if (!$('tl').hidden) closeTimeline(); else if (plcState.id) closePlace(); else if (!popLook.hidden) togglePop(false); else if (!$('pop-plan').hidden) togglePlan(false); else if (!$('phone-modal').hidden) $('phone-modal').hidden = true; else if (drV && !drV.hidden) closeVault(); else if (!drS.hidden) closeSession(); else if (!drM.hidden) closeMac(); else if (fp.on) exitFp();
   });
   $('feed-toggle').addEventListener('click', () => { if (!small.matches) return; const open = $('feed').classList.toggle('feed--open'); $('feed-toggle').setAttribute('aria-expanded', String(open)); });
 }
