@@ -80,7 +80,17 @@ export function editorClis({ home = os.homedir(), apps = '/Applications', env = 
   }
   return found.filter((x) => fs.existsSync(path.join(home, x.dot)));   // (an editor that has been opened here)
 }
-const run = (cli, args) => new Promise((resolve) => execFile(cli, args, { timeout: 120_000, windowsHide: true, shell: process.platform === 'win32' }, (err) => resolve(!err)));
+function run(cli, args) {
+  return new Promise((resolve) => {
+    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(cli)) {
+      const q = (s) => `"${String(s).replace(/"/g, '""')}"`;
+      const cmdline = `"${[cli, ...args].map(q).join(' ')}"`;
+      execFile(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', cmdline], { timeout: 120_000, windowsHide: true, windowsVerbatimArguments: true }, (err) => resolve(!err));
+      return;
+    }
+    execFile(cli, args, { timeout: 120_000, windowsHide: true }, (err) => resolve(!err));
+  });
+}
 /** Into each editor: [{ app, ok }]. */
 export async function installPanel(vsix, clis = editorClis()) {
   const out = [];
