@@ -31,14 +31,28 @@ export function createUndo({ dir, now = Date.now, maxBytes = 5e6, keep = 3 }) {
   /** Before a file tool writes `file` (synchronous: the copy is made before Claude Code writes). */
   function before(sid, file) {
     const t = last(sid); if (!t || !file || t.undone || t.files.some((x) => x.file === file)) return;
-    let st = null; try { st = fs.statSync(file); } catch { /* not there yet: a new file */ }
-    if (st && !st.isFile()) return;
-    const x = { file, existed: !!st, kept: null, big: false };
+    let st = null; try { st = fs.lstatSync(file); } catch { /* not there yet: a new file */ }
+    if (st && (st.isSymbolicLink() || !st.isFile())) return;
+    const x = { file, existed: !!st, kept: null, big: false, confirmed: false };
     if (st && st.size > maxBytes) x.big = true;
     else if (st) {
       try { fs.mkdirSync(turnDir(sid, t), { recursive: true }); x.kept = path.join(turnDir(sid, t), String(t.files.length + 1)); fs.copyFileSync(file, x.kept); } catch { x.kept = null; x.big = true; }
     }
     t.files.push(x);
+  }
+  /** Mark a file write as having completed (PostToolUse). */
+  function confirm(sid, file) {
+    const t = last(sid); if (!t || !file) return;
+    const x = t.files.find((f) => f.file === file);
+    if (x) x.confirmed = true;
+  }
+  /** Drop an unconfirmed snapshot when a tool call was denied or failed before writing. */
+  function reject(sid, file) {
+    const t = last(sid); if (!t || !file || t.undone) return;
+    const idx = t.files.findIndex((f) => f.file === file && !f.confirmed);
+    if (idx < 0) return;
+    const [x] = t.files.splice(idx, 1);
+    if (x.kept) fsp.rm(x.kept, { force: true }).catch(() => {});
   }
   /** The turn ended (Stop). */
   function stop(sid) { const t = last(sid); if (t && !t.end) t.end = now(); }
@@ -49,7 +63,8 @@ export function createUndo({ dir, now = Date.now, maxBytes = 5e6, keep = 3 }) {
     const t = last(sid); if (!t || !t.files.length) return null;
     const files = [];
     for (const x of t.files) {
-      let st = null; try { st = await fsp.stat(x.file); } catch { /* gone */ }
+      let st = null; try { st = await fsp.lstat(x.file); } catch { /* gone */ }
+      if (st?.isSymbolicLink()) { files.push({ file: x.file, action: 'changedAfter' }); continue; }
       const later = !!st && t.end && st.mtimeMs > t.end + SLACK;
       if (x.big) { files.push({ file: x.file, action: 'big' }); continue; }
       if (!x.existed) { files.push({ file: x.file, action: !st ? 'same' : later ? 'changedAfter' : 'delete' }); continue; }
@@ -66,6 +81,8 @@ export function createUndo({ dir, now = Date.now, maxBytes = 5e6, keep = 3 }) {
     const after = path.join(turnDir(sid, t), 'after'), done = [];
     if (steps.length) await fsp.mkdir(after, { recursive: true });
     for (const [i, s] of steps.entries()) {
+      let curStat = null; try { curStat = await fsp.lstat(s.file); } catch { /* gone */ }
+      if (curStat?.isSymbolicLink()) continue;
       try { await fsp.copyFile(s.file, path.join(after, `${i + 1}-${path.basename(s.file)}`)); } catch { /* (a file deleted since: nothing to keep) */ }
       try {
         if (s.action === 'delete') await fsp.unlink(s.file);
@@ -79,5 +96,5 @@ export function createUndo({ dir, now = Date.now, maxBytes = 5e6, keep = 3 }) {
   }
   /** For the session's pub: how many files the last turn's file tools touched, and whether it was undone. Cheap. */
   const info = (sid) => { const t = last(sid); return t && t.files.length ? { n: t.files.length, at: t.at, done: !!t.end, undone: t.undone } : null; };
-  return { prompt, before, stop, plan, apply, info };
+  return { prompt, before, confirm, reject, stop, plan, apply, info };
 }

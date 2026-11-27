@@ -6,16 +6,17 @@ import path from 'node:path';
 import { createUndo } from '../../server/undo.mjs';
 
 // the office's own copies: made by before() as each file tool is about to write, per turn
-function setup() {
+function setup(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'office-undo-')), work = path.join(root, 'work');
   fs.mkdirSync(work);
-  let t = 1_000_000;
-  const u = createUndo({ dir: path.join(root, 'undo'), now: () => t, maxBytes: 100 });
-  return { u, f: (n) => path.join(work, n), tick: (ms) => { t += ms; return t; }, root };
+  t?.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  let t0 = 1_000_000;
+  const u = createUndo({ dir: path.join(root, 'undo'), now: () => t0, maxBytes: 100 });
+  return { u, f: (n) => path.join(work, n), tick: (ms) => { t0 += ms; return t0; }, root };
 }
 
-test('a turn: an edited file back as it was, a new one removed, one changed since left alone, a big one left alone', async () => {
-  const { u, f, tick, root } = setup();
+test('a turn: an edited file back as it was, a new one removed, one changed since left alone, a big one left alone', async (t) => {
+  const { u, f, tick, root } = setup(t);
   for (const [n, s] of [['a.txt', 'a before'], ['c.txt', 'c before'], ['big.txt', 'x'.repeat(200)]]) fs.writeFileSync(f(n), s);
   u.prompt('sess-one', 'tidy the files');
   // Claude's file tools, each asked first (the copy is made before the write)
@@ -42,8 +43,8 @@ test('a turn: an edited file back as it was, a new one removed, one changed sinc
   assert.ok(root);
 });
 
-test('only the last turn, only after a prompt; the oldest turns\' copies go', async () => {
-  const { u, f, tick } = setup();
+test('only the last turn, only after a prompt; the oldest turns\' copies go', async (t) => {
+  const { u, f, tick } = setup(t);
   u.before('sess-two', f('x.txt'));   // (no turn yet: nothing kept)
   assert.equal(await u.plan('sess-two'), null);
   fs.writeFileSync(f('x.txt'), 'one');
@@ -53,4 +54,34 @@ test('only the last turn, only after a prompt; the oldest turns\' copies go', as
   await u.apply('sess-two');
   assert.equal(fs.readFileSync(f('x.txt'), 'utf8'), 'v3');   // (as before the last turn, not before the first)
   assert.equal(fs.readdirSync(path.join(path.dirname(path.dirname(f('x.txt'))), 'undo', 'sess-two')).length, 3);   // (3 turns kept)
+});
+
+test('reject drops denied PreToolUse writes so a later human file is not deleted', async (t) => {
+  const { u, f, tick } = setup(t);
+  u.prompt('sess-deny', 'try writing secret.txt');
+  u.before('sess-deny', f('denied.txt'));
+  u.reject('sess-deny', f('denied.txt'));
+  u.stop('sess-deny');
+  // User later creates denied.txt manually within the turn window
+  fs.writeFileSync(f('denied.txt'), 'user file');
+  const at = tick(100) / 1000;
+  fs.utimesSync(f('denied.txt'), at, at);
+  assert.equal(await u.plan('sess-deny'), null);
+  assert.equal(fs.readFileSync(f('denied.txt'), 'utf8'), 'user file');
+});
+
+test('confirmed writes stay tracked even if a subsequent attempt fails', async (t) => {
+  const { u, f, tick } = setup(t);
+  fs.writeFileSync(f('ok.txt'), 'before');
+  u.prompt('sess-ok', 'edit ok.txt');
+  u.before('sess-ok', f('ok.txt'));
+  fs.writeFileSync(f('ok.txt'), 'after');
+  u.confirm('sess-ok', f('ok.txt'));
+  u.reject('sess-ok', f('ok.txt'));
+  const end = tick(1000) / 1000;
+  fs.utimesSync(f('ok.txt'), end - 1, end - 1);
+  u.stop('sess-ok');
+  const r = await u.apply('sess-ok');
+  assert.equal(r.done.length, 1);
+  assert.equal(fs.readFileSync(f('ok.txt'), 'utf8'), 'before');
 });
