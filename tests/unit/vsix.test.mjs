@@ -10,8 +10,9 @@ let unzip = true;
 try { execFileSync('unzip', ['-v'], { stdio: 'ignore' }); } catch { unzip = false; }
 
 // the editor side-bar extension as a .vsix: the manifest names it, its files under extension/, a zip unzip agrees with
-test('the side-bar extension packs into a .vsix', { skip: !unzip && 'no unzip' }, () => {
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'office-vsix-')), 'p.vsix');
+test('the side-bar extension packs into a .vsix', { skip: !unzip && 'no unzip' }, (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'office-vsix-')), out = path.join(dir, 'p.vsix');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   buildVsix(path.resolve('vscode-extension'), out);
   execFileSync('unzip', ['-tq', out]);   // (every entry's CRC checked)
   const list = execFileSync('unzip', ['-Z1', out], { encoding: 'utf8' }).trim().split('\n').sort();
@@ -22,12 +23,13 @@ test('the side-bar extension packs into a .vsix', { skip: !unzip && 'no unzip' }
   assert.equal(`${pkg.publisher}.${pkg.name}`, EXT_ID);
 });
 
-test('editors: only the ones opened on this computer; the panel found by its folder', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'office-ed-')), bin = path.join(home, 'bin');
+test('editors: only the ones opened on this computer; the panel found by its folder', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'office-ed-')), empty = fs.mkdtempSync(path.join(os.tmpdir(), 'office-ed2-')), bin = path.join(home, 'bin');
+  t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(empty, { recursive: true, force: true }); });
   fs.mkdirSync(bin); fs.writeFileSync(path.join(bin, process.platform === 'win32' ? 'cursor.cmd' : 'cursor'), '');
   fs.mkdirSync(path.join(home, '.cursor', 'extensions', `${EXT_ID}-0.1.0`), { recursive: true });
   const found = editorClis({ home, apps: path.join(home, 'none'), env: { PATH: bin } });
   assert.deepEqual(found.map((e) => e.app), ['Cursor']);
   assert.deepEqual(panelIn({ home }), ['Cursor']);
-  assert.deepEqual(editorClis({ home: fs.mkdtempSync(path.join(os.tmpdir(), 'office-ed2-')), apps: path.join(home, 'none'), env: { PATH: bin } }), []);   // (never opened here)
+  assert.deepEqual(editorClis({ home: empty, apps: path.join(home, 'none'), env: { PATH: bin } }), []);   // (never opened here)
 });

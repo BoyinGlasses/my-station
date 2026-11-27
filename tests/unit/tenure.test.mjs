@@ -6,8 +6,9 @@ import path from 'node:path';
 import { createTenure, farewellDue, wasActive, dayOf } from '../../server/tenure.mjs';
 
 const DAY = 864e5, NOW = new Date(2026, 10, 3, 16, 0).getTime();
-function dirs() {
+function dirs(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tenure-')), data = path.join(root, 'data'), claude = path.join(root, 'claude');
+  t?.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(data); fs.mkdirSync(path.join(claude, 'projects'), { recursive: true });
   return { root, data, claude };
 }
@@ -33,8 +34,8 @@ test('a farewell is due only for a project that really worked (two days or more)
   assert.equal(farewellDue(null, 30, NOW), false);
 });
 
-test('activity counts days and turns, persists, and a project that had its farewell comes back when a session opens in it', async () => {
-  const d = dirs(); let at = NOW - 40 * DAY;
+test('activity counts days and turns, persists, and a project that had its farewell comes back when a session opens in it', async (ctx) => {
+  const d = dirs(ctx); let at = NOW - 40 * DAY;
   const seen = [];
   const t = make(d, () => at, (what, name) => seen.push(`${what}:${name}`));
   assert.equal(t.touch('shop-api', { at }), 'new');
@@ -57,8 +58,8 @@ test('activity counts days and turns, persists, and a project that had its farew
   fs.rmSync(d.root, { recursive: true, force: true });
 });
 
-test('never-active projects get no farewell, however long they sit', () => {
-  const d = dirs(); let at = NOW - 200 * DAY;
+test('never-active projects get no farewell, however long they sit', (ctx) => {
+  const d = dirs(ctx); let at = NOW - 200 * DAY;
   const t = make(d, () => at);
   t.touch('tried-once', { at }); t.touch('tried-once', { at: at + 3600e3 });   // (the same day)
   at = NOW;
@@ -68,8 +69,8 @@ test('never-active projects get no farewell, however long they sit', () => {
   fs.rmSync(d.root, { recursive: true, force: true });
 });
 
-test('the first run reads the projects already there from the transcripts (dates and folders only), as there before', async () => {
-  const d = dirs();
+test('the first run reads the projects already there from the transcripts (dates and folders only), as there before', async (ctx) => {
+  const d = dirs(ctx);
   transcript(d.claude, '/Users/me/projects/old-crm', 'a1', 70); transcript(d.claude, '/Users/me/projects/old-crm', 'a2', 45);
   transcript(d.claude, '/Users/me/projects/one-off', 'b1', 50);
   const before = fs.readdirSync(path.join(d.claude, 'projects'), { recursive: true }).sort();
@@ -84,8 +85,8 @@ test('the first run reads the projects already there from the transcripts (dates
   fs.rmSync(d.root, { recursive: true, force: true });
 });
 
-test('the list stays bounded', () => {
-  const d = dirs(); let at = NOW - 400 * DAY;
+test('the list stays bounded', (ctx) => {
+  const d = dirs(ctx); let at = NOW - 400 * DAY;
   const t = make(d, () => at);
   for (let i = 0; i < 320; i++) { t.touch(`p${i}`, { at: at + i * 1000 }); }
   at = NOW;
@@ -98,8 +99,8 @@ test('the list stays bounded', () => {
 });
 
 const tick = () => new Promise((r) => setTimeout(r, 30));
-test('interns: a project new to the office is one until 20 finished turns on two days; projects already known are permanent', async () => {
-  const d = dirs();
+test('interns: a project new to the office is one until 20 finished turns on two days; projects already known are permanent', async (ctx) => {
+  const d = dirs(ctx);
   // the office already knew one project (a ledger from before interns came in)
   fs.writeFileSync(path.join(d.data, 'tenure.json'), JSON.stringify({ v: 1, since: NOW - 100 * DAY, seeded: true, projects: { 'old-app': { first: NOW - 90 * DAY, last: NOW - DAY, days: 20, lastDay: dayOf(NOW - DAY), turns: 400 } } }));
   // and Claude Code had worked in another folder, unknown to the office, months ago
@@ -132,8 +133,8 @@ test('interns: a project new to the office is one until 20 finished turns on two
   fs.rmSync(d.root, { recursive: true, force: true });
 });
 
-test('a fresh install: everything in the transcripts is permanent, only what starts after is an intern', async () => {
-  const d = dirs();
+test('a fresh install: everything in the transcripts is permanent, only what starts after is an intern', async (ctx) => {
+  const d = dirs(ctx);
   transcript(d.claude, '/Users/me/projects/legacy', 'l1', 10);
   const t = make(d);
   await t.seed();

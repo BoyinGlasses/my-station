@@ -5,30 +5,30 @@ import os from 'node:os';
 import path from 'node:path';
 import { createTrophies, MILESTONES } from '../../server/trophies.mjs';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'office-trophies-'));
+const tmp = (t) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'office-trophies-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
 const today = () => '2026-10-27';
 
-test('the opening plaque is earned on the first run, without a message', () => {
+test('the opening plaque is earned on the first run, without a message', (t) => {
   const sent = [];
-  const t = createTrophies({ dataDir: tmp(), claudeDir: tmp(), today, deployRe: /git push .*v\d/, onChange: (p, earned) => sent.push(earned) });
-  assert.ok(t.pub().earned.open);
+  const tr = createTrophies({ dataDir: tmp(t), claudeDir: tmp(t), today, deployRe: /git push .*v\d/, onChange: (p, earned) => sent.push(earned) });
+  assert.ok(tr.pub().earned.open);
   assert.equal(sent.length, 0);
 });
 
-test('live counts reach a milestone and announce it once', () => {
+test('live counts reach a milestone and announce it once', (t) => {
   const sent = [];
-  const t = createTrophies({ dataDir: tmp(), claudeDir: tmp(), today, deployRe: /git push .*v\d/, onChange: (p, earned) => sent.push(...earned) });
-  t.bump('deploy');
+  const tr = createTrophies({ dataDir: tmp(t), claudeDir: tmp(t), today, deployRe: /git push .*v\d/, onChange: (p, earned) => sent.push(...earned) });
+  tr.bump('deploy');
   assert.deepEqual(sent, ['d1']);
-  t.bump('deploy');
+  tr.bump('deploy');
   assert.deepEqual(sent, ['d1'], 'not announced twice');
-  assert.equal(t.pub().totals.deploy, 2);
+  assert.equal(tr.pub().totals.deploy, 2);
 });
 
-test('a session counts once however many prompts it gets', () => {
-  const t = createTrophies({ dataDir: tmp(), claudeDir: tmp(), today, deployRe: /x/, onChange: () => {} });
-  t.session('abc'); t.session('abc'); t.session('def');
-  assert.equal(t.pub().totals.sessions, 2);
+test('a session counts once however many prompts it gets', (t) => {
+  const tr = createTrophies({ dataDir: tmp(t), claudeDir: tmp(t), today, deployRe: /x/, onChange: () => {} });
+  tr.session('abc'); tr.session('abc'); tr.session('def');
+  assert.equal(tr.pub().totals.sessions, 2);
 });
 
 test('every milestone has a known kind and a positive threshold', () => {

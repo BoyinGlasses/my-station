@@ -22,10 +22,10 @@ function transcript(file, { prompt = 'sửa lỗi đăng nhập Google', reply =
     title ? line({ type: 'custom-title', customTitle: title }) : '',
   ].join(''));
 }
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'office-vault-'));
+const tmp = (t) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'office-vault-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
 
-test('a transcript read into its words: your prompt without what the editor added, Claude\'s text, your title', async () => {
-  const d = tmp(), f = path.join(d, 'x.jsonl'); transcript(f);
+test('a transcript read into its words: your prompt without what the editor added, Claude\'s text, your title', async (t) => {
+  const d = tmp(t), f = path.join(d, 'x.jsonl'); transcript(f);
   const r = await readTranscript(f);
   assert.equal(r.title, 'Sửa đăng nhập');   // (yours wins over the generated one)
   assert.equal(r.cwd, '/Users/me/app');
@@ -43,8 +43,8 @@ test('what the editor and Claude Code wrap around a prompt goes; a paste keeps i
   assert.equal(fold('Sửa LỖI Đà Nẵng'), 'sua loi da nang');
 });
 
-test('every account read once, kept small, found with or without accents, and kept once Claude Code deletes it', async () => {
-  const home = tmp(), main = path.join(home, '.claude'), other = path.join(home, '.claude-phu');
+test('every account read once, kept small, found with or without accents, and kept once Claude Code deletes it', async (ctx) => {
+  const home = tmp(ctx), main = path.join(home, '.claude'), other = path.join(home, '.claude-phu');
   transcript(path.join(main, 'projects', '-Users-me-app', `${SID}.jsonl`));
   transcript(path.join(main, 'projects', '-Users-me-site', `${SID2}.jsonl`), { prompt: 'thêm trang giá', reply: 'Xong trang pricing.', title: '' });
   fs.mkdirSync(other); fs.symlinkSync(path.join(main, 'projects'), path.join(other, 'projects'), 'junction');   // (an account sharing the main one's history; a junction on Windows, which needs no admin)
