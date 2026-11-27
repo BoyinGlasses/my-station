@@ -885,9 +885,9 @@ async function steerTo(b, who) {
   if (!t && !(s?.pid && (s.status !== 'rest' || s.busy))) return [409, { ok: false, code: 'notBusy', message: tr('chat.steer.notBusy', { name }) }];
   const inbox = t?.inbox || s?.inbox || null, acct = s && acctOf(s);
   const can = (t?.agent || s?.agent || agent) === 'claude' ? steerable({ inbox, mode: s?.mode || '', inbound: inboundFrom({ configDir: t?.env?.CLAUDE_CONFIG_DIR || (acct ? dirOfSlug(acct) : CLAUDE_DIR), cwd: s?.cwd || t?.dir }), isSocket }) : { ok: false, why: 'noInbox' };
-  chat.say('me', `💬 @${name} ${text}`, { now: true, long: true });
+  chat.say('me', `💬 @${name} ${redact(text)}`, { now: true, long: true });
   const now = can.ok && await deliver(inbox, tr('server.steer.note', { text }));
-  fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} note ${who} ${t ? `task ${t.id}` : s?.sid || key} ${now ? 'delivered' : `kept (${can.ok ? 'failed' : can.why})`} ${clip(oneLine(text), 100)}\n`).catch(() => {});
+  fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} note ${who} ${t ? `task ${t.id}` : s?.sid || key} ${now ? 'delivered' : `kept (${can.ok ? 'failed' : can.why})`} ${clip(redact(oneLine(text)), 100)}\n`).catch(() => {});
   if (now) {
     if (t) cardStep(t.id, `💬 ${clip(redact(oneLine(text)), 70)}`);
     chat.system(tr('chat.steer.sent', { name }));
@@ -1136,7 +1136,7 @@ async function applyHook(p) {
       s.lastPrompt = clip(redact(said), 90);
       s.taskStart = now;
       if (!s.viaOffice) s.saidAt = now;
-      undo.prompt(sid, said);   // (a new turn: the files it changes are copied first, for "Hoàn tác lượt cuối")   // (written by you, not a run the office started: the Mac panel's "you're talking here")
+      undo.prompt(sid, redact(said));   // (a new turn: the files it changes are copied first, for "Hoàn tác lượt cuối")   // (written by you, not a run the office started: the Mac panel's "you're talking here")
       stats.prompts++; dirty = true; trophies.bump('prompts'); trophies.session(s.sid);
       e = mk('prompt', clip(s.lastPrompt, 64));
       Object.defineProperty(e, 'full', { value: clip(redact(unwrapPaste(String(p.prompt || '').replace(STRIP_TAGS, '')).trim()), 4000), enumerable: false });   // (the chat shows it whole)
@@ -1158,6 +1158,7 @@ async function applyHook(p) {
       if (!agent) { s.inTool = false; trackTodos(s, p); trackBackground(s, p); }
       count(s, p.tool_name, agent);
       if (EDIT_TOOLS.has(p.tool_name)) overlap.edited(sid, fileOf(p.tool_input, p.cwd || s.cwd));   // (another session about to edit it is told: /hook/loop)
+      if (UNDO_TOOLS.has(p.tool_name)) undo.confirm(sid, fileOf(p.tool_input, p.cwd || s.cwd));
       if (p.tool_name === 'Bash') { const r = p.tool_response; portClash(s, sid, portInUse(typeof r === 'string' ? r : r && typeof r === 'object' ? `${r.stdout || ''}\n${r.stderr || ''}` : '')); }
       if (s.status === 'wait') s.status = 'work';
       if (p.tool_name === 'Bash' && /\bgit\b/.test(String(p.tool_input?.command || ''))) setTimeout(pollGit, 1200);   // a commit or push shows up at once
@@ -1170,6 +1171,7 @@ async function applyHook(p) {
     }
     case 'PostToolUseFailure': {
       if (!agent) s.inTool = false;
+      if (UNDO_TOOLS.has(p.tool_name)) undo.reject(sid, fileOf(p.tool_input, p.cwd || s.cwd));
       if (p.tool_name === 'Bash') portClash(s, sid, portInUse(p.error));
       if (s.status === 'wait') s.status = 'work';
       const c = await classifyVi(p.tool_name, p.tool_input), runner = p.tool_name === 'Bash' && testRunner(p.tool_input?.command);
@@ -1334,7 +1336,14 @@ function readJson(req, max = 64_000) {
   return new Promise((resolve) => {
     const chunks = []; let size = 0;
     req.on('data', (c) => { size += c.length; if (size <= max) chunks.push(c); });
+    req.on('error', () => resolve(null));
     req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { resolve(null); } });
+  });
+}
+function withJson(req, res, fn, max = 64_000) {
+  readJson(req, max).then(fn).catch((err) => {
+    console.error('http', req.method, req.url, err);
+    try { if (!res.headersSent) json(res, 500, { ok: false }); else if (!res.writableEnded) res.end(); } catch { /* gone */ }
   });
 }
 const json = (res, code, obj) => res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(JSON.stringify(obj));
@@ -1419,6 +1428,7 @@ function readForm(req, max = 2_000) {
   return new Promise((resolve) => {
     let body = '';
     req.on('data', (c) => { if (body.length <= max) body += c; });
+    req.on('error', () => resolve(new URLSearchParams()));
     req.on('end', () => resolve(new URLSearchParams(body.slice(0, max))));
   });
 }
@@ -1660,6 +1670,7 @@ const deniedHeld = new Map();   // card id -> settle(retry)
 const NO_VERDICT = /^(Auto mode could not evaluate|Classifier unavailable)/i;
 async function onDenied(p, res) {
   let s = p?.session_id ? bySid(p.session_id) : null; if (p?.session_id && !s) { await scanSessions(); s = bySid(p.session_id); }
+  if (p?.session_id && UNDO_TOOLS.has(p.tool_name)) undo.reject(p.session_id, fileOf(p.tool_input, p.cwd || s?.cwd));
   const reason = clip(oneLine(String(p?.reason || '')), 300), canRetry = !NO_VERDICT.test(reason), hold = !!s && canRetry && officeFocused();
   const shell = p?.tool_name === 'Bash' || p?.tool_name === 'PowerShell';
   const cmd = clip(redact(String(shell ? p.tool_input?.command || '' : JSON.stringify(p?.tool_input || {}))), 2000);
@@ -1846,6 +1857,7 @@ async function portClash(s, sid, port) {
 }
 // Stop and a hint from the card (any page that may give work: the Mac, a phone when it is allowed)
 function loopAct(b, mac) {
+  if (!mac && !prefs.get('phoneTasks')) return { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') };
   const id = String(b?.id || ''), s = [...sessions.values()].find((x) => x.id === id); if (!s?.sid) return { ok: false, message: tr('server.loop.gone') };
   const card = loopCards.get(s.id);
   if (b.op === 'stop') {
@@ -1857,7 +1869,6 @@ function loopAct(b, mac) {
     return { ok: true, how: 'next' };
   }
   if (b.op === 'hint') {
-    if (!mac && !prefs.get('phoneTasks')) return { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') };
     // a turn already over can't take it at its next step: the page carries the conversation on instead (POST /api/tasks)
     if (s.status === 'rest') return { ok: false, code: 'resting', sid: s.sid };
     if (!loops.hint(s.sid, oneLine(b.text))) return { ok: false, code: 'empty' };
@@ -2790,10 +2801,10 @@ async function openFolder(dir) {
 }
 
 const server = http.createServer((req, res) => {
+  if (!hostAllowed(req)) { res.writeHead(421).end(); return; }
   const url = new URL(req.url, 'http://x');
   if (req.method === 'POST' && url.pathname === '/event') {
     if (!isLoopback(req) || req.headers.origin) { res.writeHead(403).end(); return; }
-    if (!hostAllowed(req)) { res.writeHead(421).end(); return; }
     const chunks = []; let size = 0;
     req.on('data', (c) => { size += c.length; if (size <= 8_000_000) chunks.push(c); });
     req.on('end', () => {
@@ -2877,7 +2888,6 @@ const server = http.createServer((req, res) => {
     readJson(req, 4_000_000).then((p) => onPermission(p, res, url.searchParams.get('long') === '1', hookLimit(req))).catch(() => { try { res.writeHead(200).end(''); } catch { /* gone */ } });
     return;
   }
-  if (!hostAllowed(req)) { res.writeHead(421).end(); return; }
   // through the tunnel (the internet), only what a phone may send: the PIN (and a new one, with the one it has now), its
   // answers to approvals (when the Mac allows them), the page's presence, the chat and work (when the Mac allows it; the
   // prompt helper's rewrite too). Everything else that changes something stays on the Mac and the home network.
@@ -2902,13 +2912,13 @@ const server = http.createServer((req, res) => {
       const lockedNow = pinLockedUntil(ip);
       if (lockedNow) pinPage(res, 429, lockMsg(lockedNow), true);
       else pinPage(res, 401, tr('server.pin.wrong', { n: left }));
-    });
+    }).catch(() => { try { if (!res.headersSent) res.writeHead(500).end(); } catch { /* gone */ } });
     return;
   }
   if (req.method === 'POST' && (url.pathname === '/api/presence' || url.pathname === '/api/perm')) {
     const sameOrigin = sameOriginOf(req);
     if (!authorized(req, url) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       if (!b) { json(res, 400, { ok: false }); return; }
       // Approving tool calls stays on the Mac unless you turned on approving from a phone (on the Mac: POST /api/phone).
       // Then a phone looking at the office holds requests too, and may allow once, deny, answer a question or a plan;
@@ -2942,7 +2952,7 @@ const server = http.createServer((req, res) => {
     if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
     const ip = clientIp(req), until = pinLockedUntil(ip);
     if (until) { json(res, 200, { ok: false, message: lockMsg(until) }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       // the PIN it has now, as on the PIN page (wrong ones count toward the same lock), then one that isn't easy to guess
       if (!sameBytes(String(b?.current || '').replace(/\D/g, ''), currentPin())) {
         const left = pinFailed(ip), lockedNow = pinLockedUntil(ip);
@@ -2963,7 +2973,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && (url.pathname === '/api/lan' || url.pathname === '/api/pin')) {   // phones on the home network: { on }; a new PIN (this computer only)
     const sameOrigin = sameOriginOf(req);
     if (!isLoopback(req) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       if (url.pathname === '/api/pin') {   // { pin } of your own, or a random one; every phone signed out (the cookie's signature covers the PIN), open pages cut off now
         const own = b?.pin == null ? '' : String(b.pin).replace(/\s/g, '');
         if (own && pinWeak(own)) { json(res, 200, { ok: false, message: tr('server.pin.weak') }); return; }   // (turned down, not an error: the page shows why)
@@ -2982,7 +2992,7 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/api/quick' && req.method === 'POST') {   // the quick commands over the chat's input, yours: { list: [{ label, prompt }] }
     if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       const list = (Array.isArray(b?.list) ? b.list : []).slice(0, 12).map((q) => ({ label: clip(oneLine(String(q?.label || '')), 24), prompt: String(q?.prompt || '').trim().slice(0, 2000) })).filter((q) => q.label && q.prompt);
       try { fs.writeFileSync(QUICK_FILE, JSON.stringify(list)); } catch { json(res, 500, { ok: false }); return; }
       json(res, 200, { ok: true, list });
@@ -2991,11 +3001,12 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/api/push' && req.method === 'POST') {   // a phone saying yes ({ op: 'add', sub }) or no ({ op: 'remove', endpoint }); { op: 'test', endpoint? }
     if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
-    readJson(req).then(async (b) => {
-      const op = String(b?.op || ''), endpoint = String(b?.endpoint || b?.sub?.endpoint || '');
+    withJson(req, res, async (b) => {
+      const op = String(b?.op || ''), endpoint = String(op === 'add' ? b?.sub?.endpoint || '' : b?.endpoint || b?.sub?.endpoint || '');
       if (op === 'add') {
         if (!push.add(b?.sub, req.headers['user-agent'])) { json(res, 400, { ok: false }); return; }
-        fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} push on ${isLoopback(req) ? 'mac' : clientIp(req)} ${new URL(endpoint).host}\n`).catch(() => {});
+        let pushHost = ''; try { pushHost = new URL(endpoint).host; } catch { /* validated by push.add */ }
+        fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} push on ${isLoopback(req) ? 'mac' : clientIp(req)} ${pushHost}\n`).catch(() => {});
       } else if (op === 'remove') push.remove(endpoint);
       else if (op === 'report') {   // a phone that couldn't turn them on: why, for looking into it
         fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} push trouble ${clip(oneLine(String(b?.why || '')), 20)} ${clip(oneLine(String(b?.detail || '')), 160)} ${isLoopback(req) ? 'mac' : clientIp(req)} ${clip(oneLine(String(req.headers['user-agent'] || '')), 120)}\n`).catch(() => {});
@@ -3010,7 +3021,7 @@ const server = http.createServer((req, res) => {
   if (url.pathname.startsWith('/api/tasks') && req.method === 'POST') {   // giving Claude work: start (from a phone only when allowed on the Mac), stop, allow
     if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
     const mac = isLoopback(req);
-    readJson(req, 8_000_000).then(async (b) => {
+    withJson(req, res, async (b) => {
       if (url.pathname === '/api/tasks/allow') {
         if (!mac) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
         prefs.set('phoneTasks', b?.on ? true : undefined);
@@ -3025,12 +3036,12 @@ const server = http.createServer((req, res) => {
         await bgRun.probe(findClaude()).catch(() => null);
         json(res, 200, tasksOut(true)); return;
       }
+      if (!mac && !prefs.get('phoneTasks')) { json(res, 403, { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') }); return; }
       if (url.pathname === '/api/tasks/stop') { json(res, 200, { ok: tasks.stop(String(b?.id || '')) }); return; }
       if (url.pathname !== '/api/tasks' && url.pathname !== '/api/tasks/steer') { json(res, 404, { ok: false }); return; }
-      if (!mac && !prefs.get('phoneTasks')) { json(res, 403, { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') }); return; }
       const [code, out] = await (url.pathname === '/api/tasks/steer' ? steerTo : giveWork)(b, mac ? 'mac' : `phone ${clientIp(req)}`);
       json(res, code, out);
-    });
+    }, 8_000_000);
     return;
   }
   if (url.pathname === '/api/prompt/rewrite' && req.method === 'POST') {   // the chat's "✨ Viết lại cho rõ": { text, lang, photos: how many } -> { ok, text }
@@ -3038,37 +3049,37 @@ const server = http.createServer((req, res) => {
     const mac = isLoopback(req);
     // (it spends the plan's quota, as work does: from a phone only when the Mac allows work from phones)
     if (!mac && !prefs.get('phoneTasks')) { json(res, 403, { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') }); return; }
-    readJson(req, 40_000).then(async (b) => {
+    withJson(req, res, async (b) => {
       const r = await rewriter.rewrite({ text: b?.text, lang: pickLang(b?.lang), photos: b?.photos });
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} rewrite ${mac ? 'mac' : `phone ${clientIp(req)}`} ${r.ok ? 'ok' : r.code} ${String(b?.text || '').length} chars\n`).catch(() => {});   // (how long, never what it says)
       json(res, r.ok ? 200 : r.code === 'busy' || r.code === 'tooMany' ? 429 : 409, r.ok ? { ok: true, text: r.text } : { ok: false, code: r.code, message: tr(`chat.coach.why.${r.code}`, { detail: r.detail || '' }) });
-    });
+    }, 40_000);
     return;
   }
   if (url.pathname === '/api/chat' && req.method === 'POST') {   // the group chat: { op, … } (say and photo only from this computer)
     if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
-    readJson(req, 600_000).then((b) => {
+    withJson(req, res, (b) => {
       const mac = isLoopback(req), op = String(b?.op || ''), str = (x, n) => String(x ?? '').slice(0, n);
-      if (op === 'send') chat.send({ text: str(b.text, 600), sticker: Number.isInteger(b.sticker) ? b.sticker : null, replyTo: str(b.replyTo, 40) || null });
+      if (op === 'send') chat.send({ text: redact(str(b.text, 600)), sticker: Number.isInteger(b.sticker) ? b.sticker : null, replyTo: str(b.replyTo, 40) || null });
       else if (op === 'react') chat.react(str(b.id, 40), 'me', str(b.emoji, 8));
       else if (op === 'vote') chat.vote(str(b.id, 40), 'me', Number(b.i));
       else if (op === 'rsvp') chat.rsvp(str(b.id, 40), 'me', !!b.yes);
       else if (op === 'recall') chat.recall(str(b.id, 40));
-      else if (op === 'poll') chat.poll('me', str(b.q, 120), (Array.isArray(b.opts) ? b.opts : []).slice(0, 6).map((x) => str(x, 60)));
+      else if (op === 'poll') chat.poll('me', redact(str(b.q, 120)), (Array.isArray(b.opts) ? b.opts : []).slice(0, 6).map((x) => redact(str(x, 60))));
       else if (op === 'photo' && mac && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(String(b.data || '')) && b.data.length < 500_000) chat.photo(b.data);
       else if (op === 'say' && mac) {
         const photo = /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(String(b.photo || '')) && b.photo.length < 500_000 ? b.photo : null;
-        chat.say(str(b.from, 60), str(b.text, 600), { key: str(b.key, 120) || undefined, sticker: Number.isInteger(b.sticker) ? b.sticker : undefined, photo, pin: !!b.pin, delay: Number.isFinite(b.delay) ? Math.min(60_000, Math.max(0, b.delay)) : undefined,
+        chat.say(str(b.from, 60), redact(str(b.text, 600)), { key: str(b.key, 120) || undefined, sticker: Number.isInteger(b.sticker) ? b.sticker : undefined, photo, pin: !!b.pin, delay: Number.isFinite(b.delay) ? Math.min(60_000, Math.max(0, b.delay)) : undefined,
           react: (Array.isArray(b.react) ? b.react : []).filter((e) => REACTIONS.includes(e)), reacts: Math.min(6, Number(b.reacts) || 2),
           answer: (Array.isArray(b.answer) ? b.answer : []).slice(0, 4).map((a) => ({ key: str(a?.key, 30).replace(/[^\w]/g, ''), chance: Math.min(1, Math.max(0, Number(a?.chance ?? 1))) })).filter((a) => a.key) });
       } else { json(res, 400, { ok: false }); return; }
       json(res, 200, { ok: true });
-    });
+    }, 600_000);
     return;
   }
   if (req.method === 'POST' && url.pathname === '/api/rc') {   // every new session with Remote Control: { on } (this computer only)
     if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       const ok = setRcAtStartup(!!b?.on);
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} remote control at startup ${b?.on ? 'on' : 'off'} -> ${ok ? 'ok' : 'failed'}\n`).catch(() => {});
       json(res, ok ? 200 : 500, { ok, rc: rcAtStartup() });
@@ -3077,14 +3088,14 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/api/tunnel/domain') {   // a fixed address on your domain: { host } ('' = back to a quick tunnel; this computer only)
     if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
-    readJson(req).then((b) => { const r = setTunnelDomain(b?.host); json(res, r.ok ? 200 : 400, { ...tunnelOut(), ...r }); });
+    withJson(req, res, (b) => { const r = setTunnelDomain(b?.host); json(res, r.ok ? 200 : 400, { ...tunnelOut(), ...r }); });
     return;
   }
   if (url.pathname === '/api/tunnel' && (req.method === 'POST' || req.method === 'GET')) {   // the office from anywhere: { on } (this computer only)
     const sameOrigin = sameOriginOf(req);
     if (!isLoopback(req) || !sameOrigin || (req.method === 'POST' && !String(req.headers['content-type'] || '').startsWith('application/json'))) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
     if (req.method === 'GET') { Promise.race([bgRun.probe(findClaude()).catch(() => null), new Promise((r) => setTimeout(r, 4000))]).then(() => json(res, 200, tunnelOut())); return; }   // (whether this Claude Code has background sessions: looked at once)
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       prefs.set('tunnel', b?.on ? true : undefined);
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} tunnel ${b?.on ? 'on' : 'off'}\n`).catch(() => {});
       if (b?.on) startTunnel(); else stopTunnel();
@@ -3095,7 +3106,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/phone') {   // approving from a phone: { approve } (this computer only)
     const sameOrigin = sameOriginOf(req);
     if (!isLoopback(req) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       prefs.set('phoneApprove', b?.approve ? true : undefined);
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} phone approve ${b?.approve ? 'on' : 'off'}\n`).catch(() => {});
       broadcast({ k: 'phone', approve: !!b?.approve, tasks: !!prefs.get('phoneTasks') });
@@ -3103,10 +3114,10 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  if (req.method === 'POST' && url.pathname === '/api/sys/auto') {   // close idle sessions on a timer: { hours: 0 | 2 | 4 | 8 }
+  if (req.method === 'POST' && url.pathname === '/api/sys/auto') {   // close idle sessions on a timer: { hours: 0 | 2 | 4 | 8 } (this computer only)
     const sameOrigin = sameOriginOf(req);
-    if (!authorized(req, url) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.forbidden') }); return; }
-    readJson(req).then((b) => {
+    if (!isLoopback(req) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.forbidden') }); return; }
+    withJson(req, res, (b) => {
       if (!b || !prefs.setAutoClose(Number(b.hours))) { json(res, 400, { ok: false, message: tr('server.badRequest') }); return; }
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} ${req.socket.remoteAddress} auto-close ${prefs.autoClose()}h\n`).catch(() => {});
       json(res, 200, { ok: true, hours: prefs.autoClose() });
@@ -3114,10 +3125,10 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  if (req.method === 'POST' && url.pathname === '/api/sys/action') {
+  if (req.method === 'POST' && url.pathname === '/api/sys/action') {   // system cleanup / process stop: this computer only
     const sameOrigin = sameOriginOf(req);
-    if (!authorized(req, url) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.forbidden') }); return; }
-    readJson(req).then(async (body) => {
+    if (!isLoopback(req) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.forbidden') }); return; }
+    withJson(req, res, async (body) => {
       if (!body) { json(res, 400, { ok: false, message: tr('server.badRequest') }); return; }
       if (body.action === 'closeIdle' && Array.isArray(body.items)) closingOnPurpose(body.items.map((i) => Number(i?.target)).filter((n) => n > 0));   // (closed from the Mac panel: no red line in the editor)
       const result = await sysAction(body).catch((err) => ({ ok: false, message: String(err.message || err) }));
@@ -3133,7 +3144,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/api/panel/answer') {   // a banner's button (menubar/): { id, choice: allow | deny | skip } for a tool request (this computer only)
     if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       const p = pending.get(String(b?.id || '')), choice = b?.choice;
       if (!p || (p.kind || 'perm') !== 'perm' || !['allow', 'deny', 'skip'].includes(choice)) { json(res, 404, { ok: false, message: tr('server.api.expired') }); return; }
       if (choice === 'allow' && dangerKey(p)) { json(res, 403, { ok: false, message: tr('server.api.riskyOnMac') }); return; }   // (a risky command: two clicks, in the office)
@@ -3146,7 +3157,7 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/api/macapprove') {   // Settings → More: approve from the Mac's notifications, on or off (this computer only)
     if (!isLoopback(req) || (req.method === 'POST' && (!sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')))) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
     if (req.method !== 'POST') { json(res, 200, { ok: true, on: macApprove() }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       prefs.set('macApprove', b?.on === false ? false : undefined);
       if (b?.on === false && !officeFocused()) for (const [id, x] of [...pending]) if (!x.long && !x.phone) keepForPhone(id, 'macoff');   // (nobody else holds them now)
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} mac notification approve ${macApprove() ? 'on' : 'off'}\n`).catch(() => {});
@@ -3156,7 +3167,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/api/panel/open') {   // the small panel's buttons: the office (or its list view) in the browser (this computer only)
     if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.openOnMac') }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       openUrl(`http://localhost:${PORT}/${b?.what === '2d' ? '?view=2d' : ''}`);
       json(res, 200, { ok: true });
     });
@@ -3165,7 +3176,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/open') {
     const sameOrigin = sameOriginOf(req);
     if (!isLoopback(req) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.openOnMac') }); return; }
-    readJson(req).then(async (b) => {
+    withJson(req, res, async (b) => {
       const s = [...sessions.values()].find((x) => x.id === String(b?.id || ''));
       const r = await openWindow(s);
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} open ${s?.name || '?'} -> ${r.ok ? r.app : r.message}\n`).catch(() => {});
@@ -3175,7 +3186,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'POST' && (url.pathname === '/api/stranded/open' || url.pathname === '/api/stranded/remove')) {   // (this computer only, from this page)
     if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.openOnMac') }); return; }
-    readJson(req).then(async (b) => {
+    withJson(req, res, async (b) => {
       const w = stranded.entry(b?.id);
       if (url.pathname === '/api/stranded/open') {
         const r = w ? await openFolder(w.path) : { ok: false, message: tr('mac.stranded.gone') };
@@ -3193,7 +3204,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && /^\/api\/accounts(\/(code|cancel|login|rename|use|auto|order|move|renew))?$/.test(url.pathname)) {   // (this computer only, from this page)
     const sameOrigin = sameOriginOf(req);
     if (!isLoopback(req) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.account.onMac') }); return; }
-    readJson(req).then(async (b) => {
+    withJson(req, res, async (b) => {
       if (url.pathname === '/api/accounts') { json(res, 200, await prepareAccount(b?.name)); return; }
       if (url.pathname === '/api/accounts/renew') {   // { name }: its dead token renewed now, then its usage read (refreshLogin)
         const dir = dirOfSlug(String(b?.name || ''));
@@ -3243,7 +3254,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'POST' && /^\/api\/ai\/(codex|ag)\/(use|add|cancel|remove|rename|auto|order|later|read)$/.test(url.pathname)) {   // (this computer only, from this page)
     if (AI_OFF || !isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.account.onMac') }); return; }
-    readJson(req).then(async (b) => {
+    withJson(req, res, async (b) => {
       const [, tool, op] = /^\/api\/ai\/(\w+)\/(\w+)$/.exec(url.pathname), id = String(b?.id || '').slice(0, 40), label = clip(oneLine(b?.label), 24);
       let r = { ok: false };
       if (tool === 'codex') {
@@ -3271,7 +3282,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/api/tenure') {   // this computer only: { op: 'config', days } (Settings → More), { op: 'farewell' | 'official', name } (the page held it)
     if (!authorized(req, url) || !sameOriginOf(req) || !isLoopback(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       if (b?.op === 'config') {
         const d = Number(b.days);
         if (d !== 0 && !FAREWELL_DAYS.includes(d)) { json(res, 400, { ok: false }); return; }
@@ -3287,7 +3298,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/denied') {   // a refused call's card: { id, op: 'retry' | 'keep' }
     if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
     const mac = isLoopback(req);
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       if (!mac && !prefs.get('phoneApprove')) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
       const settle = deniedHeld.get(String(b?.id || ''));
       if (!settle) { json(res, 409, { ok: false, message: tr('server.deny.over') }); return; }
@@ -3300,7 +3311,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/pins') {   // the session drawer's "Ghi nhớ": { id (the session), op 'add' | 'del', text | pin }
     if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
     const mac = isLoopback(req);
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       if (!mac && !prefs.get('phoneTasks')) { json(res, 403, { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') }); return; }
       json(res, 200, pinOp(b || {}, [...sessions.values()].find((x) => x.id === String(b?.id || ''))));
     });
@@ -3309,7 +3320,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/undo') {   // "Hoàn tác lượt cuối": { id (the session), op?: 'tell', files? }
     if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
     const mac = isLoopback(req);
-    readJson(req).then(async (b) => {
+    withJson(req, res, async (b) => {
       if (!mac && !prefs.get('phoneTasks')) { json(res, 403, { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') }); return; }
       const [code, out] = await undoAct(b, mac ? 'mac' : `phone ${clientIp(req)}`).catch(() => [500, { ok: false }]);
       json(res, code, out);
@@ -3319,7 +3330,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/ci') {   // a red CI's card: { id } -> "Sửa luôn"
     if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
     const mac = isLoopback(req);
-    readJson(req).then(async (b) => {
+    withJson(req, res, async (b) => {
       if (!mac && !prefs.get('phoneTasks')) { json(res, 403, { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') }); return; }
       const [code, out] = await ciFix(b, mac ? 'mac' : `phone ${clientIp(req)}`).catch(() => [500, { ok: false }]);
       json(res, code, out);
@@ -3329,8 +3340,8 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/loop') {   // a stuck session's card: { op: 'stop' | 'hint', id, text }; Settings (this computer only): { op: 'config', on, n, min }
     if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
     const mac = isLoopback(req);
-    readJson(req).then((b) => {
-      if (b?.op !== 'config') { json(res, 200, loopAct(b, mac)); return; }
+    withJson(req, res, (b) => {
+      if (b?.op !== 'config') { const r = loopAct(b, mac); json(res, r.code === 'notAllowed' ? 403 : 200, r); return; }
       if (!mac) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
       const now = loopConfig(), next = { on: b.on === undefined ? now.on : !!b.on, n: LOOP_N.includes(b.n) ? b.n : now.n, min: LOOP_MIN.includes(b.min) ? b.min : now.min };
       prefs.set('loopGuard', next);
@@ -3342,7 +3353,7 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/api/models' && (req.method === 'POST' || !['agent', 'dir', 'sid'].some((k) => url.searchParams.has(k)))) {   // Settings → More: the models of a session and its subagents (this computer only)
     if (!isLoopback(req) || (req.method === 'POST' && (!sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')))) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
     if (req.method !== 'POST') { json(res, 200, modelsOut()); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       const pick = (v, list) => (v === undefined ? undefined : list.includes(String(v)) ? String(v) : null);
       const main = pick(b?.main, MAIN), sub = pick(b?.sub, SUB);
       if (main === null || sub === null) { json(res, 400, { ok: false }); return; }
@@ -3352,17 +3363,17 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/api/cache') {   // the "about to go cold" notification: { nudge } (this computer only)
     if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       prefs.set('cacheNudge', b?.nudge ? true : undefined);
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} cache nudge ${b?.nudge ? 'on' : 'off'}\n`).catch(() => {});
       json(res, 200, { ok: true, nudge: !!prefs.get('cacheNudge') });
     });
     return;
   }
-  if (req.method === 'POST' && url.pathname === '/api/prefs') {
+  if (req.method === 'POST' && url.pathname === '/api/prefs') {   // language preference: this computer only
     const sameOrigin = sameOriginOf(req);
-    if (!authorized(req, url) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.forbidden') }); return; }
-    readJson(req).then((b) => {
+    if (!isLoopback(req) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.forbidden') }); return; }
+    withJson(req, res, (b) => {
       if (!b || !prefs.setLang(b.lang)) { json(res, 400, { ok: false, message: tr('server.badRequest') }); return; }
       json(res, 200, { ok: true, lang: prefs.lang() });
       broadcast({ k: 'lang', lang: prefs.lang() });   // every open page reloads in the new language
@@ -3372,7 +3383,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/todos') {
     const sameOrigin = sameOriginOf(req);
     if (!authorized(req, url) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.forbidden') }); return; }
-    readJson(req).then((b) => {
+    withJson(req, res, (b) => {
       const err = b ? todoOp(b) : tr('server.badRequest');
       json(res, err ? 400 : 200, err ? { ok: false, message: err, todos } : { ok: true, todos });
     });

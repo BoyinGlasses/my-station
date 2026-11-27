@@ -34,13 +34,13 @@ test('/event rejects browser Origins and foreign Host headers while accepting cl
     },
   });
   const base = `http://127.0.0.1:${port}`;
-  const sendRaw = (headers, body) => new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, path: '/event', method: 'POST', headers: { 'content-type': 'application/json', ...headers } }, (res) => {
+  const sendRaw = (headers, body, reqPath = '/event', method = 'POST') => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: reqPath, method, headers: { ...(body !== undefined && { 'content-type': 'application/json' }), ...headers } }, (res) => {
       res.resume();
       res.on('end', () => resolve(res.statusCode));
     });
     req.on('error', reject);
-    req.end(JSON.stringify(body));
+    req.end(body === undefined ? undefined : JSON.stringify(body));
   });
   try {
     let up = false;
@@ -54,6 +54,20 @@ test('/event rejects browser Origins and foreign Host headers while accepting cl
 
     const badHost = await sendRaw({ Host: `evil.example:${port}` }, { session_id: 'bad-host', hook_event_name: 'SessionStart', cwd: dir });
     assert.equal(badHost, 421);
+
+    const badDoctorHost = await sendRaw({ Host: `evil.example:${port}` }, undefined, '/api/doctor', 'GET');
+    assert.equal(badDoctorHost, 421);
+
+    const badOtelHost = await sendRaw({ Host: `evil.example:${port}` }, { resourceMetrics: [] }, '/v1/metrics', 'POST');
+    assert.equal(badOtelHost, 421);
+
+    // Top-level invalid `endpoint` alongside a valid `sub` previously threw `new URL(endpoint)` and crashed the server.
+    const validSub = { endpoint: 'https://fcm.googleapis.com/fcm/send/test-1', keys: { p256dh: Buffer.alloc(65, 4).toString('base64url'), auth: Buffer.alloc(16, 1).toString('base64url') } };
+    const badTopEndpoint = await sendRaw({}, { op: 'add', endpoint: 'not-a-url', sub: validSub }, '/api/push', 'POST');
+    assert.equal(badTopEndpoint, 200);
+    const invalidSub = await sendRaw({}, { op: 'add', sub: { endpoint: 'not-a-url' } }, '/api/push', 'POST');
+    assert.equal(invalidSub, 400);
+    assert.equal((await fetch(`${base}/health`)).status, 200);
 
     const ok = await sendRaw({}, { session_id: 'good-loopback', hook_event_name: 'SessionStart', cwd: dir });
     assert.equal(ok, 200);
