@@ -42,15 +42,20 @@ test('whether a note can reach a session now', () => {
   assert.deepEqual(steerable({ inbox: '/x.sock', inbound: 'refuse', isSocket: sock }), { ok: false, why: 'refuse' });
 });
 
-test('a note written into an inbox socket, and none where nothing listens', { skip: process.platform === 'win32' }, async () => {
-  const p = path.join(dir, 'in.sock'), got = [];
+test('a note written into an inbox socket, and none where nothing listens', async () => {
+  const p = process.platform === 'win32' ? `\\\\.\\pipe\\office-steer-${process.pid}-${Date.now()}` : path.join(dir, 'in.sock');
+  const gone = process.platform === 'win32' ? `\\\\.\\pipe\\office-steer-gone-${process.pid}-${Date.now()}` : path.join(dir, 'gone.sock');
+  const got = [];
   const srv = net.createServer((c) => { let b = ''; c.on('data', (d) => { b += d; }); c.on('end', () => got.push(b)); });
   await new Promise((r) => srv.listen(p, r));
-  assert.equal(isSocket(p), true);
-  assert.equal(isSocket(path.join(dir, 'cfg')), false);
-  assert.equal(await deliver(p, 'sai file rồi, dừng'), true);
-  await new Promise((r) => setTimeout(r, 50));
-  assert.deepEqual(got.map((x) => JSON.parse(x)), [{ type: 'user', message: { role: 'user', content: 'sai file rồi, dừng' } }]);
-  srv.close();
-  assert.equal(await deliver(path.join(dir, 'gone.sock'), 'x'), false);
+  try {
+    assert.equal(isSocket(p), true);
+    assert.equal(isSocket(path.join(dir, 'cfg')), false);
+    assert.equal(await deliver(p, 'sai file rồi, dừng'), true);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(got.map((x) => JSON.parse(x)), [{ type: 'user', message: { role: 'user', content: 'sai file rồi, dừng' } }]);
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
+  assert.equal(await deliver(gone, 'x'), false);
 });

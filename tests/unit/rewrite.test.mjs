@@ -5,17 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { cleanRewrite, createRewriter, rewriteSystem } from '../../server/rewrite.mjs';
 
-// tests/e2e/fake-claude.sh stands in for Claude Code: nothing is spent, the answer is the same every time
-const FAKE = path.resolve(import.meta.dirname, '../e2e/fake-claude.sh');
-function setup(opts = {}) {
+// tests/e2e/fake-claude.mjs stands in for Claude Code: nothing is spent, the answer is the same every time
+const FAKE = path.resolve(import.meta.dirname, '../e2e/fake-claude.mjs');
+function setup(t, opts = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'office-rewrite-'));
-  const rw = createRewriter({ claude: () => ({ file: FAKE }), env: () => ({ ...process.env, HOME: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude') }), dir: path.join(home, 'rewrite'), ...opts });
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const rw = createRewriter({ claude: () => ({ file: process.execPath, args: [FAKE] }), env: () => ({ ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude') }), dir: path.join(home, 'rewrite'), ...opts });
   const args = () => { try { return fs.readFileSync(path.join(home, '.fake-claude-rewrite.log'), 'utf8'); } catch { return ''; } };   // (every argument in [brackets])
   return { rw, args };
 }
 
-test('rewrites with a small model, no tools, one turn, nothing saved, the hooks off; text only', { skip: process.platform === 'win32' }, async () => {
-  const { rw, args } = setup();
+test('rewrites with a small model, no tools, one turn, nothing saved, the hooks off; text only', async (t) => {
+  const { rw, args } = setup(t);
   const r = await rw.rewrite({ text: 'sao', lang: 'vi', photos: 1 });
   assert.deepEqual(r, { ok: true, text: 'Mục tiêu: sửa lỗi đang thấy trong ảnh đính kèm.\nBối cảnh: [trang nào?]\nXong khi: trang hiện đúng, không còn lỗi.' });
   const a = args();
@@ -27,8 +28,8 @@ test('rewrites with a small model, no tools, one turn, nothing saved, the hooks 
   assert.deepEqual(await rw.rewrite({ text: 'why', lang: 'en' }), { ok: true, text: 'Goal: fix the error in the attached screenshot.\nContext: [which page?]\nDone when: the page shows no error.' });
 });
 
-test('one at a time, 20 an hour, a timeout, and what went wrong', { skip: process.platform === 'win32' }, async () => {
-  const { rw } = setup({ perHour: 3, timeout: 1500 });
+test('one at a time, 20 an hour, a timeout, and what went wrong', async (t) => {
+  const { rw } = setup(t, { perHour: 3, timeout: 1500 });
   assert.deepEqual(await rw.rewrite({ text: '  ' }), { ok: false, code: 'empty' });
   const slow = rw.rewrite({ text: 'slowly please' });
   assert.deepEqual(await rw.rewrite({ text: 'meanwhile' }), { ok: false, code: 'busy' });
