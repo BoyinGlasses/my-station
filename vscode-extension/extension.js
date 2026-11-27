@@ -27,7 +27,9 @@ function activate(context) {
           : page(`<iframe src="http://127.0.0.1:${port}/panel?embed=ide" title="My Office"></iframe>`, port);
       };
       show();
-      timer = setInterval(show, 10_000);
+      const poll = () => { if (view.visible) show(); };
+      timer = setInterval(poll, 10_000);
+      view.onDidChangeVisibility(() => { if (view.visible) show(); });
       view.onDidDispose(() => clearInterval(timer));
     },
   };
