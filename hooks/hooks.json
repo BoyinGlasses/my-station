@@ -5,9 +5,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/hook/start --wait 3",
+            "timeout": 5
           }
         ]
       }
@@ -17,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
@@ -29,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
@@ -41,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
@@ -52,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s --max-time 600 -H 'X-Office-Wait: 600' -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/hook/question || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/hook/question --wait 600",
             "timeout": 605
           }
         ]
@@ -61,7 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 0.3 -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/hook/loop || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/hook/loop --fast",
             "timeout": 2
           }
         ]
@@ -72,7 +82,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
@@ -84,7 +94,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
@@ -96,7 +106,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
@@ -106,8 +116,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s --max-time 600 -H 'X-Office-Wait: 600' -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/hook/permission || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/hook/permission --wait 600",
             "timeout": 605
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/hook/denied --wait 50",
+            "timeout": 45
           }
         ]
       }
@@ -117,7 +138,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
@@ -129,7 +150,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
@@ -141,7 +162,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
@@ -153,7 +174,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
@@ -165,7 +186,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
@@ -177,7 +198,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -m 2 -o /dev/null -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4310/event || true",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/send.mjs\" http://127.0.0.1:4310/event --async",
             "timeout": 5,
             "async": true
           }
