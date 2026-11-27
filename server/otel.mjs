@@ -137,7 +137,11 @@ export function createOtel({ dir, keepDays = 30, now = () => Date.now(), cwdOf =
       s = st.sess[sid] = { f: at, l: at, cwd: '', m: false };
     }
     if (at > s.l) s.l = at;
-    if (!s.cwd && sid !== '-' && sid !== '~' && now() - (asked.get(sid) || 0) > 60e3) { asked.set(sid, now()); try { s.cwd = String(cwdOf(sid) || ''); } catch { /* unknown */ } }
+    if (!s.cwd && sid !== '-' && sid !== '~' && now() - (asked.get(sid) || 0) > 60e3) {
+      asked.delete(sid); asked.set(sid, now());
+      if (asked.size > MAX_SESSIONS) asked.delete(asked.keys().next().value);
+      try { s.cwd = String(cwdOf(sid) || ''); } catch { /* unknown */ }
+    }
     dirty = true;
     return s;
   }

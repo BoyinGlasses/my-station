@@ -10,6 +10,7 @@ export function createAgentHistory(dataDir) {
   const clean = (items) => items.filter((x) => x && ['user', 'claude', 'tool', 'note'].includes(x.role)).slice(-120).map((x) => ({ role: x.role,
     ...Object.fromEntries(['text', 'type', 'label', 'desc'].filter((k) => typeof x[k] === 'string').map((k) => [k, redact(x[k]).slice(0, k === 'text' ? 12000 : 400)])),
     ...(Number.isFinite(x.ts) ? { ts: x.ts } : {}) }));
+  let seq = 0;
   return {
     read(sid) {
       try {
@@ -19,11 +20,16 @@ export function createAgentHistory(dataDir) {
       } catch { return []; }
     },
     save(sid, items) {
-      const p = file(sid);
+      const p = file(sid), tmp = `${p}.${process.pid}.${++seq}.tmp`;
       fs.mkdirSync(dir, { recursive: true });
       const safe = clean(items);
-      fs.writeFileSync(p + '.tmp', JSON.stringify({ sid, items: safe }), { mode: 0o600 });
-      fs.renameSync(p + '.tmp', p);
+      try {
+        fs.writeFileSync(tmp, JSON.stringify({ sid, items: safe }), { mode: 0o600 });
+        fs.renameSync(tmp, p);
+      } catch (err) {
+        try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ }
+        throw err;
+      }
     },
   };
 }

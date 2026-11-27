@@ -29,7 +29,10 @@ export function createGit({ onRepo, onCommit, onPush, onCi, onRelease = () => {}
 
   async function rootOf(cwd) {
     if (!cwd) return '';
-    if (!roots.has(cwd)) roots.set(cwd, ((await run('git', ['rev-parse', '--show-toplevel'], cwd)) || '').trim());
+    if (!roots.has(cwd)) {
+      roots.set(cwd, ((await run('git', ['rev-parse', '--show-toplevel'], cwd)) || '').trim());
+      if (roots.size > 500) roots.delete(roots.keys().next().value);
+    }
     return roots.get(cwd);
   }
   async function read(root) {
