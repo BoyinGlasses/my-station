@@ -11,7 +11,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { execFile, execFileSync, spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { sysSnapshot, sysAction, scanCleanups, trackOwners, startTrend, setI18n, fmtBytes as sysBytes, fmtDur as sysDur } from './system.mjs';
 import { createOverlap, EDIT_TOOLS, fileOf, portInUse } from './overlap.mjs';
 import { OS } from './platform/index.mjs';
@@ -93,10 +93,20 @@ const TOKEN = fs.existsSync(TOKEN_FILE)
 // The PIN is read from disk on each use, so a new one takes effect at once and signs out every phone (the cookie
 // signature covers the PIN).
 const PIN_FILE = path.join(DATA_DIR, 'pin'), PIN_RE = /^\d{6,10}$/;
-function currentPin() {
-  try { const p = fs.readFileSync(PIN_FILE, 'utf8').trim(); if (PIN_RE.test(p)) return p; } catch { /* first run */ }
-  const p = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
+let pinCache = { value: '', at: 0 };
+function writePin(p) {
   fs.writeFileSync(PIN_FILE, p, { mode: 0o600 });
+  pinCache = { value: p, at: Date.now() };
+}
+function currentPin() {
+  const now = Date.now();
+  if (pinCache.value && now - pinCache.at < 2000) return pinCache.value;
+  try {
+    const p = fs.readFileSync(PIN_FILE, 'utf8').trim();
+    if (PIN_RE.test(p)) { pinCache = { value: p, at: now }; return p; }
+  } catch { /* first run */ }
+  const p = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
+  writePin(p);
   return p;
 }
 currentPin();
@@ -114,7 +124,9 @@ const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 // text, drop the tags, so a task reads "Failed to run…" rather than "<pasted_content id="afc8"> Failed…".
 const unwrapPaste = (s) => String(s ?? '').replace(/<\/?pasted_content\b[^>]*>/g, ' ');
 const base = (p) => (p ? path.basename(String(p)) : '');
-const tilde = (p) => (p && p.startsWith(HOME) ? '~' + p.slice(HOME.length) : p || '');
+const normWin = (p) => (p && process.platform === 'win32' ? p.replace(/^[a-z]:/, (c) => c.toUpperCase()) : p);
+const sameDir = (a, b) => !!a && !!b && (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+const tilde = (p) => (!p ? '' : p === HOME ? '~' : p.startsWith(HOME + path.sep) ? '~' + p.slice(HOME.length) : p);
 
 const host = (u) => { try { return new URL(u).hostname; } catch { return 'web'; } };
 
@@ -182,20 +194,18 @@ function fetchVi(text) {
   viWait.set(text, job);
   return job;
 }
-// Waits up to 1.5 s; a translation that lands later is sent as {k:'vi', from, to} and the page swaps the words in.
+// Never blocks hook handling: returns cached or redacted text immediately, translating in the background and
+// broadcasting {k:'vi', from, to} when ready so the page swaps the words in without stalling the hook queue.
 async function toVi(text) {
   text = redact(String(text || ''));
   if (!TRANSLATE || prefs.lang() !== 'vi' || !text || VI_CHARS.test(text) || !/[a-z]{3}/i.test(text)) return text;
   if (viCache[text]) return viCache[text];
-  const job = fetchVi(text);
-  const out = await Promise.race([job, new Promise((res) => setTimeout(() => res(undefined), 1500))]);
-  if (out) return out;
-  if (out === undefined) job.then((late) => {
-    if (!late) return;
+  fetchVi(text).then((late) => {
+    if (!late || late === text) return;
     for (const x of feed) { if (x.label === text) x.label = late; if (x.desc === text) x.desc = late; }
     for (const s of sessions.values()) for (const o of [s, ...Object.values(s.subs || {})]) { if (o.last?.label === text) o.last.label = late; if (o.desc === text) o.desc = late; }
     broadcast({ k: 'vi', from: text, to: late });
-  });
+  }).catch(() => {});
   return text;
 }
 /* ---------- images a session touched: the feed shows them, a click opens them (GET /api/image?id=) ----------
@@ -643,7 +653,7 @@ const bgRun = createBg(), WIN = process.platform === 'win32', fwd = (p) => p.rep
 const bgOn = () => !!prefs.get('phoneTasksBg');
 const bgOut = () => { const k = bgRun.known(findClaude()); return { on: bgOn(), ok: k ? k.ok : null, version: k?.version || null }; };
 const tasks = createTasks({
-  dataDir: DATA_DIR, claude: () => findClaude(), codex: () => findCodex(), opencode: () => findOpenCode(), antigravity: () => findAntigravity(), zcode: () => findZCode(),
+  dataDir: DATA_DIR, claude: () => findClaude(), codex: () => findCodex(), opencode: () => findOpenCodeCached(), antigravity: () => findAntigravity(), zcode: () => findZCode(),
   env: () => { const e = { ...process.env }; if (nowDir) e.CLAUDE_CONFIG_DIR = nowDir; return e; },   // (the account new sessions start on)
   bg: { ...bgRun, want: bgOn, settings: () => bgSettings({ port: PORT, win: WIN, send: SEND }) },
   printSettings: (t) => printSettings({ port: PORT, task: t.id, win: WIN, send: SEND }),   // (a `-p` run tells where its inbox is: server/steer.mjs)
@@ -654,7 +664,7 @@ const tasks = createTasks({
   onDone: (t) => {
     for (const [id, p] of pending) if (p.task === t.id) giveBack(id, 'hook');
     const sid = t.sid && (t.agent === 'claude' ? t.sid : `${t.agent}:${t.sid}`);
-    if (sid) taskSids.add(sid);
+    if (sid) { taskSids.add(sid); if (taskSids.size > 500) taskSids.delete(taskSids.values().next().value); }
     const card = cards.get(t.id); cards.delete(t.id);
     if (card) { clearTimeout(card.timer); chat.setWork(card.id, { state: t.stopped ? 'stopped' : t.error ? 'fail' : 'done', steps: card.steps, n: card.n, end: Date.now(), perm: null, ask: null }); }
     for (const x of sessions.values()) if (x.viaOffice === t.id) delete x.viaOffice;   // (its events are its own again)
@@ -774,7 +784,7 @@ async function stopBgSession(s) {
   return !!bin && bgRun.stop(bin.file, s.jobId, e);
 }
 const tasksOut = (local) => ({ ok: true, allowed: local || !!prefs.get('phoneTasks'), running: tasks.list(), bg: bgOut(),
-  agents: [{ id: 'claude', name: 'Claude Code', bin: findClaude() }, { id: 'codex', name: 'Codex', bin: findCodex() }, { id: 'opencode', name: 'OpenCode', bin: findOpenCode() }, { id: 'antigravity', name: 'Antigravity', bin: findAntigravity() }, { id: 'zcode', name: 'ZCode', bin: findZCode() }].filter((a) => a.bin).map(({ id, name }) => ({ id, name })),
+  agents: [{ id: 'claude', name: 'Claude Code', bin: findClaude() }, { id: 'codex', name: 'Codex', bin: findCodex() }, { id: 'opencode', name: 'OpenCode', bin: findOpenCodeCached() }, { id: 'antigravity', name: 'Antigravity', bin: findAntigravity() }, { id: 'zcode', name: 'ZCode', bin: findZCode() }].filter((a) => a.bin).map(({ id, name }) => ({ id, name })),
   projects: knownDirs.filter((d) => fs.existsSync(d)).map((d) => ({ dir: tilde(d), name: path.basename(d) })),
   sessions: [...sessions.values()].filter((s) => (!s.agent || ['claude', 'codex', 'opencode', 'antigravity'].includes(s.agent)) && s.sid && s.cwd).map((s) => ({ id: s.id, sid: s.sid, agent: s.agent || 'claude', name: s.title || s.name, dir: tilde(s.cwd), status: s.status, cache: cacheOut(s) })) });
 
@@ -819,7 +829,7 @@ async function giveWork(b, who) {
   // who it goes to: a conversation the office knows (carried on itself, the very one), or a project folder (a new
   // conversation there, or the one you started there); one way for both the chat's "Gửi tới" and 📋 Giao việc
   const s = b?.sid && [...sessions.values()].find((x) => (!x.agent || ['claude', 'codex', 'opencode', 'antigravity'].includes(x.agent)) && x.sid === String(b.sid) && x.cwd);
-  const want = String(b?.dir || '').replace(/^~(?=$|[\\/])/, os.homedir()), pdir = !s && (knownDirs.find((d) => d === want) || stranded.dirOf(want));   // (or a worktree the Mac panel listed, "Giao Claude làm nốt")
+  const want = String(b?.dir || '').replace(/^~(?=$|[\\/])/, os.homedir()), pdir = !s && (knownDirs.find((d) => sameDir(d, want)) || stranded.dirOf(want));   // (or a worktree the Mac panel listed, "Giao Claude làm nốt")
   if (!s && !pdir) return [400, { ok: false, code: 'noDir', message: tr('chat.task.noDir') }];
   const text = String(b?.text || '').trim().slice(0, 4000), images = (Array.isArray(b?.images) ? b.images : []).slice(0, 4).map(String);
   if (!text) return [400, { ok: false, code: 'empty' }];
@@ -875,7 +885,7 @@ const steerLater = new Map();   // threads' key (a session id, or 'dir:' a proje
 async function steerTo(b, who) {
   const text = String(b?.text || '').trim().slice(0, 2000);
   if (!text) return [400, { ok: false, code: 'empty' }];
-  const want = String(b?.dir || '').replace(/^~(?=$|[\\/])/, os.homedir()), pdir = !b?.sid && knownDirs.find((d) => d === want);
+  const want = String(b?.dir || '').replace(/^~(?=$|[\\/])/, os.homedir()), pdir = !b?.sid && knownDirs.find((d) => sameDir(d, want));
   const agent = String(b?.agent || 'claude'), projectKey = pdir ? `dir:${agent === 'claude' ? '' : agent + ':'}${pdir}` : null;
   let t = b?.task ? tasks.get(String(b.task)) : b?.sid ? tasks.of(String(b.sid)) : tasks.byKey(projectKey);
   const key = t?.from?.orig || (b?.sid ? String(b.sid) : projectKey);
@@ -915,8 +925,10 @@ const DIRS_FILE = path.join(DATA_DIR, 'projects.json');
 let knownDirs = []; try { knownDirs = JSON.parse(fs.readFileSync(DIRS_FILE, 'utf8')).filter((d) => typeof d === 'string'); } catch { /* none yet */ }
 const modelCache = new Map();
 function noteDir(dir) {
-  if (!dir || !path.isAbsolute(dir) || knownDirs[0] === dir) return;
-  knownDirs = [dir, ...knownDirs.filter((d) => d !== dir)].slice(0, 30);
+  if (!dir || !path.isAbsolute(dir)) return;
+  dir = normWin(path.resolve(dir));
+  if (knownDirs[0] && sameDir(knownDirs[0], dir)) return;
+  knownDirs = [dir, ...knownDirs.filter((d) => !sameDir(d, dir))].slice(0, 30);
   fsp.writeFile(DIRS_FILE, JSON.stringify(knownDirs)).catch(() => {});
 }
 
@@ -932,7 +944,7 @@ async function sameProcess(j) {
   let t = procStart.get(key);
   if (t == null) {
     t = await OS.startedAt(j.pid);
-    if (t) procStart.set(key, t);
+    if (t) { procStart.set(key, t); if (procStart.size > 1000) procStart.delete(procStart.keys().next().value); }
   }
   return !t || Math.abs(t - j.startedAt) < 10 * 60e3;
 }
@@ -1034,10 +1046,13 @@ setInterval(() => {
     for (const [id, sub] of Object.entries(s.subs)) if (now - sub.seenAt > (s.status === 'rest' ? 90_000 : 300_000)) { finishSub(s, id, now); broadcast({ k: 'sess', s: pub(s) }); }
   }
 }, 2000).unref();
-// Token usage, context fill and API-price equivalent per session, read from the transcripts every few seconds.
-let usageBusy = false;
+// Token usage, context fill and API-price equivalent per session, read from the transcripts every few seconds (slower when nobody is watching).
+let usageBusy = false, usageIdleAt = 0;
 setInterval(async () => {
-  if (usageBusy) return; usageBusy = true;
+  if (usageBusy) return;
+  const now = Date.now();
+  if (!watching() && now - usageIdleAt < 30_000) return;
+  usageBusy = true; usageIdleAt = now;
   try {
     for (const s of sessions.values()) {
       if (s.agent && s.agent !== 'claude') continue;
@@ -1418,10 +1433,12 @@ function pinLockedUntil(ip) {
 function pinFailed(ip) {
   const now = Date.now();
   allFails.push(now);
+  for (const [k, v] of pinFails) if (v.until && v.until <= now && v.n === 0) pinFails.delete(k);
   const f = pinFails.get(ip) || { n: 0, until: 0 };
   f.n += 1;
   if (f.n >= 5) { f.n = 0; f.until = now + LOCK_MS; }
-  pinFails.set(ip, f);
+  pinFails.delete(ip); pinFails.set(ip, f);
+  if (pinFails.size > 500) pinFails.delete(pinFails.keys().next().value);
   return f.until > now ? 0 : 5 - f.n;
 }
 function readForm(req, max = 2_000) {
@@ -1470,7 +1487,15 @@ const lockMsg = (until) => tr('server.pin.locked', { n: Math.max(1, Math.ceil((u
    OFFICE_HOLD_MS shortens the 45 s for the tests. */
 const HOLD_MS = Math.min(45_000, Number(process.env.OFFICE_HOLD_MS) || 45_000);
 const presence = new Map();   // page id -> { focused, at }
-const officeFocused = () => { const now = Date.now(); for (const p of presence.values()) if (p.focused && now - p.at < 5000) return true; return false; };
+const officeFocused = () => {
+  const now = Date.now();
+  let focused = false;
+  for (const [k, p] of presence) {
+    if (now - p.at >= 30_000) presence.delete(k);
+    else if (p.focused && now - p.at < 5000) focused = true;
+  }
+  return focused;
+};
 /* The menu bar app holds requests too, when the owner is at the Mac (server/mac-hold.mjs): it reads /api/panel every
    3 s (that is its "alive"), and the Mac's idle time is read at most every 10 s while it does. OFFICE_IDLE_SEC fakes the
    idle time (tests only). "Approve from the Mac's notifications" off (Settings → More): it never holds. */
@@ -2175,54 +2200,70 @@ const slugOf = (name) => String(name || '').normalize('NFD').replace(/[\u0300-\u
 /* Claude Code's CLI: on the PATH, else the usual install places and the editors' extensions (VS Code, Cursor, Windsurf,
    Antigravity…: the newest), where it often is when Claude Code came with an editor and was never put on the PATH */
 let claudeBin = null;
+const binCache = new Map();
+function cachedBin(key, envVar, resolve) {
+  const envVal = process.env[envVar] || '';
+  const hit = binCache.get(key), now = Date.now();
+  if (hit && hit.envVal === envVal && now - hit.at < 60_000 && (!hit.val || fs.existsSync(hit.val.file))) return hit.val;
+  const val = resolve();
+  binCache.set(key, { envVal, val, at: now });
+  return val;
+}
+const findOpenCodeCached = () => cachedBin('opencode', 'OFFICE_OPENCODE_BIN', () => findOpenCode());
 function findCodex() {
-  const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
-  const asCommand = (f) => /\.[cm]?js$/i.test(f) ? { file: process.execPath, args: [f], protocol: 'codex' } : { file: f, protocol: 'codex' };
-  const override = process.env.OFFICE_CODEX_BIN;
-  if (override && isFile(override)) return asCommand(override);
-  const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  for (const d of dirs) {
-    const exe = path.join(d, process.platform === 'win32' ? 'codex.exe' : 'codex');
-    if (isFile(exe)) return asCommand(exe);
-    const npm = path.join(d, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
-    if (isFile(npm)) return asCommand(npm);
-  }
-  const exe = process.platform === 'win32' ? 'codex.exe' : 'codex', found = [];
-  for (const ide of ['.antigravity-ide', '.antigravity', '.vscode', '.vscode-insiders', '.cursor', '.windsurf', '.kiro', '.trae']) {
-    const base = path.join(os.homedir(), ide, 'extensions');
-    let names = []; try { names = fs.readdirSync(base).filter((e) => /^openai\.chatgpt-/.test(e)); } catch { /* not installed */ }
-    for (const e of names) { try { for (const p of fs.readdirSync(path.join(base, e, 'bin'))) if (isFile(path.join(base, e, 'bin', p, exe))) found.push(path.join(base, e, 'bin', p, exe)); } catch { /* no programs */ } }
-  }
-  const latest = found.sort((a, b) => verNum(b) - verNum(a))[0];
-  return latest ? asCommand(latest) : null;
+  return cachedBin('codex', 'OFFICE_CODEX_BIN', () => {
+    const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
+    const asCommand = (f) => /\.[cm]?js$/i.test(f) ? { file: process.execPath, args: [f], protocol: 'codex' } : { file: f, protocol: 'codex' };
+    const override = process.env.OFFICE_CODEX_BIN;
+    if (override && isFile(override)) return asCommand(override);
+    const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+    for (const d of dirs) {
+      const exe = path.join(d, process.platform === 'win32' ? 'codex.exe' : 'codex');
+      if (isFile(exe)) return asCommand(exe);
+      const npm = path.join(d, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+      if (isFile(npm)) return asCommand(npm);
+    }
+    const exe = process.platform === 'win32' ? 'codex.exe' : 'codex', found = [];
+    for (const ide of ['.antigravity-ide', '.antigravity', '.vscode', '.vscode-insiders', '.cursor', '.windsurf', '.kiro', '.trae']) {
+      const base = path.join(os.homedir(), ide, 'extensions');
+      let names = []; try { names = fs.readdirSync(base).filter((e) => /^openai\.chatgpt-/.test(e)); } catch { /* not installed */ }
+      for (const e of names) { try { for (const p of fs.readdirSync(path.join(base, e, 'bin'))) if (isFile(path.join(base, e, 'bin', p, exe))) found.push(path.join(base, e, 'bin', p, exe)); } catch { /* no programs */ } }
+    }
+    const latest = found.sort((a, b) => verNum(b) - verNum(a))[0];
+    return latest ? asCommand(latest) : null;
+  });
 }
 function findAntigravity() {
-  const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
-  const asCommand = (f) => /\.[cm]?js$/i.test(f) ? { file: process.execPath, args: [f], protocol: 'acp' } : { file: f, protocol: 'acp' };
-  const override = process.env.OFFICE_ANTIGRAVITY_BIN;
-  if (override && isFile(override)) return asCommand(override);
-  for (const d of String(process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
-    const exe = path.join(d, process.platform === 'win32' ? 'agy.exe' : 'agy');
-    if (isFile(exe)) return asCommand(exe);
-  }
-  const installed = path.join(process.env.LOCALAPPDATA || path.join(HOME, '.local'), 'agy', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy');
-  return isFile(installed) ? asCommand(installed) : null;
+  return cachedBin('antigravity', 'OFFICE_ANTIGRAVITY_BIN', () => {
+    const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
+    const asCommand = (f) => /\.[cm]?js$/i.test(f) ? { file: process.execPath, args: [f], protocol: 'acp' } : { file: f, protocol: 'acp' };
+    const override = process.env.OFFICE_ANTIGRAVITY_BIN;
+    if (override && isFile(override)) return asCommand(override);
+    for (const d of String(process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
+      const exe = path.join(d, process.platform === 'win32' ? 'agy.exe' : 'agy');
+      if (isFile(exe)) return asCommand(exe);
+    }
+    const installed = path.join(process.env.LOCALAPPDATA || path.join(HOME, '.local'), 'agy', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy');
+    return isFile(installed) ? asCommand(installed) : null;
+  });
 }
 function findZCode() {
-  const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
-  const asCommand = (f) => /\.[cm]?js$/i.test(f) ? { file: process.execPath, args: [f] } : { file: f };
-  const override = process.env.OFFICE_ZCODE_BIN;
-  if (override && isFile(override)) return asCommand(override);
-  const resources = process.platform === 'win32' ? path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ZCode', 'resources') : process.platform === 'darwin' ? '/Applications/ZCode.app/Contents/Resources' : '';
-  if (resources) {
-    const script = path.join(resources, 'glm', 'zcode.cjs'), config = path.join(resources, 'config', 'provider', 'zcode-builtin.json');
-    if (isFile(script) && isFile(config)) return { ...asCommand(script), env: { ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: config } };
-  }
-  for (const d of String(process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
-    const exe = path.join(d, process.platform === 'win32' ? 'zcode.exe' : 'zcode');
-    if (isFile(exe)) return asCommand(exe);
-  }
-  return null;
+  return cachedBin('zcode', 'OFFICE_ZCODE_BIN', () => {
+    const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
+    const asCommand = (f) => /\.[cm]?js$/i.test(f) ? { file: process.execPath, args: [f] } : { file: f };
+    const override = process.env.OFFICE_ZCODE_BIN;
+    if (override && isFile(override)) return asCommand(override);
+    const resources = process.platform === 'win32' ? path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ZCode', 'resources') : process.platform === 'darwin' ? '/Applications/ZCode.app/Contents/Resources' : '';
+    if (resources) {
+      const script = path.join(resources, 'glm', 'zcode.cjs'), config = path.join(resources, 'config', 'provider', 'zcode-builtin.json');
+      if (isFile(script) && isFile(config)) return { ...asCommand(script), env: { ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: config } };
+    }
+    for (const d of String(process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
+      const exe = path.join(d, process.platform === 'win32' ? 'zcode.exe' : 'zcode');
+      if (isFile(exe)) return asCommand(exe);
+    }
+    return null;
+  });
 }
 function findClaude() {
   if (claudeBin && fs.existsSync(claudeBin.file)) return claudeBin;
@@ -2409,7 +2450,7 @@ function shareWithMain(dir) {
       if (st && n === 'settings.json' && officeOnly(to)) fs.renameSync(to, path.join(dir, 'settings.office-bak.json'));
       else if (st && st.isDirectory() && !fs.readdirSync(to).length) fs.rmdirSync(to);
       else if (st) continue;
-      fs.symlinkSync(from, to);
+      fs.symlinkSync(from, to, process.platform === 'win32' && fs.statSync(from).isDirectory() ? 'junction' : undefined);
     } catch { /* left as it is */ }
   }
   // the main account's own MCP servers (its .claude.json stays per account: it holds the login)
@@ -2642,6 +2683,7 @@ const codex = AI_OFF ? null : createCodexAccounts({
 });
 // Antigravity's agent at a desk while its conversation file keeps changing; the 2 s tick rests it after 20 quiet seconds.
 if (!AI_OFF && process.env.OFFICE_AG_RUNS !== '0') watchAntigravity({
+  watching,
   dirs: process.env.OFFICE_AG_DIRS?.split(path.delimiter) || ['antigravity', 'antigravity-ide'].map((d) => path.join(os.homedir(), '.gemini', d, 'conversations')),
   onActive: ({ id, dir, mtime }) => {
     const sid = `antigravity:${id}`, key = sidToKey.get(sid) || sid; let s = bySid(sid);
@@ -2718,7 +2760,7 @@ async function agBusy() {
   return [...sessions.values()].filter((s) => pids.has(s.pid) && (s.status !== 'rest' || s.busy)).length;
 }
 const ag = AI_OFF ? null : createAntigravityAccounts({
-  dir: path.join(DATA_DIR, 'antigravity'), db: agDb, app: { name: AG_APP, running: agRunning, ...(agMac && { quit: agQuit, launch: agLaunch }) }, busyIn: agBusy, away: agAway, awayMin: AG_AWAY_MIN, log: (s) => console.log(s),
+  dir: path.join(DATA_DIR, 'antigravity'), db: agDb, app: { name: AG_APP, running: agRunning, ...(agMac && { quit: agQuit, launch: agLaunch }) }, busyIn: agBusy, away: agAway, awayMin: AG_AWAY_MIN, watching, log: (s) => console.log(s),
   onChange: (what) => {
     aiSoon();
     const o = ag.out(), name = (id) => aiName(o.list.find((a) => a.id === id));
@@ -2781,7 +2823,12 @@ async function openWindow(s) {
 
 /* ---------- "Việc bỏ quên": work left in the worktrees of the repositories sessions have worked in (server/stranded.mjs),
    for the Mac panel; open one, give Claude the rest of it, or remove a worktree with nothing left in it ---------- */
-const within = (child, dir) => !!child && (child === dir || child.startsWith(dir + path.sep));
+const within = (child, dir) => {
+  if (!child || !dir) return false;
+  const c = process.platform === 'win32' ? path.resolve(child).toLowerCase() : path.resolve(child);
+  const d = process.platform === 'win32' ? path.resolve(dir).toLowerCase() : path.resolve(dir);
+  return c === d || c.startsWith(d.endsWith(path.sep) ? d : d + path.sep);
+};
 const stranded = createStranded({
   dirs: () => [...[...sessions.values()].map((s) => s.cwd), ...knownDirs],
   // (a session open in it, or work given from the chat running there: never removed from under them)
@@ -2927,7 +2974,7 @@ const server = http.createServer((req, res) => {
       if (phone && !prefs.get('phoneApprove')) { json(res, url.pathname === '/api/presence' ? 200 : 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
       if (url.pathname === '/api/presence') {
         const page = String(b.page || '').slice(0, 64);
-        if (b.focused) presence.set(page, { focused: true, at: Date.now() }); else presence.delete(page);
+        if (b.focused) { presence.delete(page); presence.set(page, { focused: true, at: Date.now() }); if (presence.size > 100) presence.delete(presence.keys().next().value); } else presence.delete(page);
         if (!officeFocused() && !barHolds()) for (const [id, x] of [...pending]) if (!x.long && !x.phone) keepForPhone(id, 'blur');   // nobody is looking: give the prompt back (a background session's waits on, and one held for the phone)
         json(res, 200, { ok: true, pending: pending.size });
         return;
@@ -2962,7 +3009,7 @@ const server = http.createServer((req, res) => {
       const own = String(b?.pin || '').replace(/\s/g, '');
       if (pinWeak(own)) { json(res, 200, { ok: false, message: tr('server.pin.weak') }); return; }
       pinFails.delete(ip);
-      fs.writeFileSync(PIN_FILE, own, { mode: 0o600 });
+      writePin(own);
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} phone pin set ${ip}\n`).catch(() => {});
       // this phone stays in (a new cookie, signed with the new PIN); every other one is cut off once the answer has gone
       res.on('finish', () => { for (const srv of [...lanServers.values(), tunnel.srv]) srv?.closeAllConnections?.(); });
@@ -2977,7 +3024,7 @@ const server = http.createServer((req, res) => {
       if (url.pathname === '/api/pin') {   // { pin } of your own, or a random one; every phone signed out (the cookie's signature covers the PIN), open pages cut off now
         const own = b?.pin == null ? '' : String(b.pin).replace(/\s/g, '');
         if (own && pinWeak(own)) { json(res, 200, { ok: false, message: tr('server.pin.weak') }); return; }   // (turned down, not an error: the page shows why)
-        fs.writeFileSync(PIN_FILE, own || String(crypto.randomInt(0, 1e6)).padStart(6, '0'), { mode: 0o600 });
+        writePin(own || String(crypto.randomInt(0, 1e6)).padStart(6, '0'));
         for (const srv of [...lanServers.values(), tunnel.srv]) srv?.closeAllConnections?.();
         fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} phone pin ${own ? 'set' : 'new'}\n`).catch(() => {});
         json(res, 200, { ok: true, pin: currentPin() });
@@ -3408,9 +3455,9 @@ const server = http.createServer((req, res) => {
     if (!isLoopback(req) && !prefs.get('phoneTasks')) { json(res, 403, { ok: false }); return; }
     const sid = url.searchParams.get('sid'), s = sid && [...sessions.values()].find((x) => x.sid === sid && x.cwd);
     const want = String(url.searchParams.get('dir') || '').replace(/^~(?=$|[\\/])/, os.homedir());
-    const dir = s?.cwd || knownDirs.find((d) => d === want), agent = s?.agent || (s ? 'claude' : url.searchParams.get('agent'));
+    const dir = s?.cwd || knownDirs.find((d) => sameDir(d, want)), agent = s?.agent || (s ? 'claude' : url.searchParams.get('agent'));
     if (!dir || !['claude', 'codex', 'opencode', 'antigravity', 'zcode'].includes(agent)) { json(res, 400, { ok: false }); return; }
-    const bin = agent === 'claude' ? findClaude() : agent === 'codex' ? findCodex() : agent === 'opencode' ? findOpenCode() : agent === 'antigravity' ? findAntigravity() : null;
+    const bin = agent === 'claude' ? findClaude() : agent === 'codex' ? findCodex() : agent === 'opencode' ? findOpenCodeCached() : agent === 'antigravity' ? findAntigravity() : null;
     const key = `${agent}:${dir}`, old = modelCache.get(key);
     if (!old || Date.now() - old.at > 60_000) modelCache.set(key, { at: Date.now(), promise: listModels(agent, bin, dir) });
     const cached = modelCache.get(key);
@@ -3483,7 +3530,10 @@ const server = http.createServer((req, res) => {
     const dayOf = (t) => new Date(t).toLocaleDateString('sv-SE');
     (async () => {
       let items = [], truncated = false;
-      for (const d of [...new Set([dayOf(from), dayOf(to)])]) { const r = await replayRange(d, from, to, 400_000); items = items.concat(r.items); truncated ||= r.truncated; }
+      const days = new Set();
+      for (let t = from; t <= to; t += 12 * 3600e3) days.add(dayOf(t));
+      days.add(dayOf(to));
+      for (const d of days) { const r = await replayRange(d, from, to, 400_000); items = items.concat(r.items); truncated ||= r.truncated; }
       json(res, 200, { ...buildTimeline(items, from, to), truncated });
     })().catch(() => json(res, 200, { from, to, rows: [], totals: { work: 0, wait: 0, turn: 0, prompts: 0 }, truncated: false }));
     return;
@@ -3654,11 +3704,21 @@ async function cloudflared() {
 }
 // a cloudflared left running by an office that stopped without stopping it (only if that pid is still a cloudflared:
 // pids get reused)
-function killStaleTunnel() {
+async function isCloudflared(pid) {
+  if (!(pid > 1) || !alive(pid)) return false;
+  try {
+    if (process.platform === 'win32') {
+      const p = (await OS.processes()).procs.get(pid);
+      return !!p && /cloudflared|tunnel/i.test(`${p.comm} ${p.args}`);
+    }
+    const comm = await new Promise((resolve) => execFile('ps', ['-o', 'comm=', '-p', String(pid)], { timeout: 4000 }, (err, out) => resolve(err ? '' : String(out).trim())));
+    return /cloudflared|tunnel/i.test(path.basename(comm));
+  } catch { return false; }
+}
+async function killStaleTunnel() {
   try {
     const pid = Number(fs.readFileSync(TUNNEL_PID, 'utf8'));
-    const comm = pid > 1 && alive(pid) && process.platform !== 'win32' ? execFileSync('ps', ['-o', 'comm=', '-p', String(pid)], { timeout: 4000 }).toString() : '';
-    if (/cloudflared|tunnel/i.test(path.basename(comm.trim()))) process.kill(pid, 'SIGTERM');
+    if (await isCloudflared(pid)) process.kill(pid, 'SIGTERM');
   } catch { /* none, or gone */ }
   fs.rmSync(TUNNEL_PID, { force: true });
 }
@@ -3666,7 +3726,6 @@ function killStaleTunnel() {
 // leads to a port that doesn't change (OFFICE_TUNNEL_PORT, else the office's + 7), so the office coming back takes the
 // same cloudflared and the same address (data/tunnel.json) and the phone's link still works. Only the switch stops it.
 const TUNNEL_FILE = path.join(DATA_DIR, 'tunnel.json'), TUNNEL_LOG = path.join(DATA_DIR, 'tunnel.log'), TUNNEL_PORT = Number(process.env.OFFICE_TUNNEL_PORT) || PORT + 7;
-const isCloudflared = (pid) => { try { return process.platform !== 'win32' && /cloudflared/.test(path.basename(execFileSync('ps', ['-o', 'comm=', '-p', String(pid)], { timeout: 4000 }).toString().trim())); } catch { return false; } };
 const readJsonFile = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 async function listenTunnel() {
   if (tunnel.srv) return;
@@ -3761,8 +3820,8 @@ async function startTunnel() {
     // the one left running before a restart, to the same port: the same address
     const saved = readJsonFile(TUNNEL_FILE);
     const named = namedTunnel(), want = named ? `https://${named.host}` : null;   // (the same kind: a fixed address, or a quick one)
-    if (saved?.url && saved.port === tunnel.port && saved.pid > 1 && alive(saved.pid) && isCloudflared(saved.pid) && (want ? saved.url === want : /trycloudflare/.test(saved.url))) { tunnelUp(saved.pid, saved.url); return; }
-    killStaleTunnel();
+    if (saved?.url && saved.port === tunnel.port && saved.pid > 1 && alive(saved.pid) && (await isCloudflared(saved.pid)) && (want ? saved.url === want : /trycloudflare/.test(saved.url))) { tunnelUp(saved.pid, saved.url); return; }
+    await killStaleTunnel();
     const cmd = await cloudflared();
     if (gen !== tunnel.gen || !prefs.get('tunnel')) return;
     tunnel.state = 'starting';
@@ -3806,7 +3865,7 @@ for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => process.exit(0));
 
 server.listen(PORT, HOST, () => {
   syncLan();
-  if (prefs.get('tunnel')) startTunnel(); else killStaleTunnel();
+  if (prefs.get('tunnel')) startTunnel(); else killStaleTunnel().catch(() => {});
   scanSessions();
   scanCleanups().catch(() => {});   // macOS paths; elsewhere there may be nothing to scan
   trackOwners();
