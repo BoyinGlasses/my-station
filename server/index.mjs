@@ -13,7 +13,6 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { execFile, spawn } from 'node:child_process';
 import { sysSnapshot, sysAction, scanCleanups, trackOwners, startTrend, setI18n, fmtBytes as sysBytes, fmtDur as sysDur } from './system.mjs';
-import { createOverlap, EDIT_TOOLS, fileOf, portInUse } from './overlap.mjs';
 import { OS } from './platform/index.mjs';
 import { parseEtime } from './platform/shared.mjs';
 import { redact } from './redact.mjs';
@@ -26,7 +25,7 @@ import { createAuth, KEEP_DAYS } from './auth.mjs';
 import { createTunnel } from './tunnel.mjs';
 import { createApprovals } from './approvals.mjs';
 import { createClaudeAccounts } from './claude-accounts.mjs';
-import { createUndo, EDIT_TOOLS as UNDO_TOOLS } from './undo.mjs';
+import { createGuards, EDIT_TOOLS, UNDO_TOOLS, fileOf, portInUse, LOOP_MIN, LOOP_N } from './guards.mjs';
 import { createVault } from './vault.mjs';
 import { MAIN, SUB, modelsOf, withModels, hasSplit, withSplit } from './models.mjs';
 import { createCodexAccounts } from './codex-accounts.mjs';
@@ -52,7 +51,6 @@ import { createGit } from './git.mjs';
 import { createStranded } from './stranded.mjs';
 import { weekSummary } from './wrapped.mjs';
 import { createPrefs } from './prefs.mjs';
-import { createLoopGuard, LOOP_DEFAULTS, LOOP_MIN, LOOP_N } from './loops.mjs';
 import { createTenure, FAREWELL_DAYS, FAREWELL_DEFAULT } from './tenure.mjs';
 import { cacheClock, cacheFromResume, cacheFromStatus, cacheGuess } from '../src/shared/cache-clock.js';
 import { createOtel } from './otel.mjs';
@@ -72,11 +70,6 @@ const SESS_DIR = path.join(CLAUDE_DIR, 'sessions');
 // OFFICE_LOG: append the server's output to a file (the Windows sign-in script has nowhere else to put it)
 if (process.env.OFFICE_LOG) { const out = fs.createWriteStream(process.env.OFFICE_LOG, { flags: 'a' }); process.stdout.write = process.stderr.write = out.write.bind(out); }
 const DATA_DIR = dataDir(ROOT);   // tests and a second dev copy use their own
-// what you pinned for each conversation ("Ghi nhớ cho Claude", further down): read before any session is shown
-const PINS_FILE = path.join(DATA_DIR, 'pins.json'), PIN_MAX = 12, PIN_LEN = 500;
-let pins = {}; try { pins = JSON.parse(fs.readFileSync(PINS_FILE, 'utf8')) || {}; } catch { /* none yet */ }
-// the office's own copies of what Claude's file tools change, per turn ("Hoàn tác lượt cuối", further down): made before any session is shown
-const undo = createUndo({ dir: path.join(DATA_DIR, 'undo') });
 const PAGE_FILES = new Set(['/favicon.ico', '/icon.svg', '/apple-icon.png', '/opengraph-image.jpg', '/twitter-image.jpg', '/manifest.webmanifest', '/sw.js', '/icon-512.png']);   // (app/: the tab icons, the share card, the app on a phone's home screen; public/: its worker and big icon)
 const prefs = createPrefs(DATA_DIR), { tr } = prefs;   // tr('area.key', vars): words in the office's language (src/i18n)
 const num = (n, digits) => createT(prefs.lang()).num(n, digits);   // a number written the office's way (1,000 / 1.000)
@@ -1302,6 +1295,17 @@ async function autoCloseIdle() {
 setInterval(() => { autoCloseIdle().catch(() => {}); }, 5 * 60_000).unref();
 
 const {
+  undo, loops, overlap, sessionById,
+  pinsOf, pinsOut, pinOp, onStart,
+  undoOut, undoAct,
+  loopConfig, loopLabel, onLoop, loopReply, loopAct, loopOut, touchLoopHook,
+  overlapNote, withContext, portClash,
+} = createGuards({
+  dataDir: DATA_DIR, prefs, tr, sessions, bySid, chat, tasks, runOf, giveWork, steerTo,
+  pub, broadcast, pushOut, sysSnapshot, sysDur, tilde, actionLog: ACTION_LOG,
+});
+
+const {
   presence, barWatch, pending, released, deniedHeld,
   officeFocused, macApprove, barHolds, hookLimit,
   permPub, permDecision, askDecision, planDecision,
@@ -1309,173 +1313,9 @@ const {
   taskPermission, onPermission, onDenied, onQuestion,
 } = createApprovals({
   prefs, push, tasks, cards, chat, sessions, bySid, scanSessions, pub, broadcast,
-  classifyVi, normalizeTool, undo, undoTools: UNDO_TOOLS, fileOf,
-  loopLabel: (name, input) => loopLabel(name, input),
+  classifyVi, normalizeTool, undo, undoTools: UNDO_TOOLS, fileOf, loopLabel,
   actionLog: ACTION_LOG, tr, idleSeconds: () => idleSeconds(),
 });
-
-/* ---------- "Ghi nhớ cho Claude": what you pin for a conversation (the session drawer's "Ghi nhớ" tab), said to Claude
-   again each time Claude Code compacts it, when what it was told along the way may be summed up away. The synchronous
-   SessionStart hook (matcher "compact") gets them as additionalContext. Kept by the conversation's id in
-   data/pins.json, so they outlive the office starting again: 12 a conversation, 500 characters each, 300
-   conversations. ---------- */
-const savePins = () => fsp.writeFile(PINS_FILE, JSON.stringify(pins)).catch(() => {});
-const pinsOf = (sid) => (sid && pins[sid]?.list) || [];
-function pinsOut(s) { const p = (s?.sid && pins[s.sid]) || {}; return { ok: true, list: p.list || [], said: p.said || 0 }; }
-function pinOp(b, s) {
-  if (!s?.sid) return { ok: false, message: tr('server.pins.noSid') };
-  const p = (pins[s.sid] ||= { list: [], at: 0 });
-  if (b.op === 'add') {
-    const text = String(b.text || '').trim().slice(0, PIN_LEN); if (!text) return { ok: false };
-    if (p.list.length >= PIN_MAX) return { ok: false, message: tr('server.pins.full', { n: PIN_MAX }) };
-    p.list.push({ id: crypto.randomUUID().slice(0, 8), text, at: Date.now() });
-  } else if (b.op === 'del') p.list = p.list.filter((x) => x.id !== String(b.pin || ''));
-  else return { ok: false };
-  p.at = Date.now();
-  if (!p.list.length) delete pins[s.sid];
-  const keys = Object.keys(pins); if (keys.length > 300) for (const k of keys.sort((a, c) => (pins[a].at || 0) - (pins[c].at || 0)).slice(0, keys.length - 300)) delete pins[k];
-  savePins(); broadcast({ k: 'sess', s: pub(s) });
-  return pinsOut(s);
-}
-// a conversation just compacted: its pins, as Claude Code wants them, and a word in the chat
-async function onStart(p) {
-  if (p?.source !== 'compact') return null;
-  const list = pinsOf(p.session_id); if (!list.length) return null;
-  pins[p.session_id].said = Date.now(); savePins();
-  const s = bySid(p.session_id); if (s) chat.system(tr('chat.pins.said', { name: s.title || s.name, n: list.length }));
-  fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} pins said again ${p.session_id} (${list.length})\n`).catch(() => {});
-  return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: `${tr('server.pins.context')}\n${list.map((x) => `- ${x.text}`).join('\n')}` } };
-}
-
-/* ---------- "Hoàn tác lượt cuối" (server/undo.mjs): the files Claude's file tools changed in a conversation's last
-   turn, put back from the office's own copies (made by /hook/loop before each write). Only once the turn is over and
-   the session rests; what is there now is kept in data/undo/<session>/<turn>/after. Phones may only when the Mac lets
-   them give work. ---------- */
-const sessionById = (id) => [...sessions.values()].find((x) => x.id === String(id || '')) || null;
-async function undoOut(s) { const p = s?.sid ? await undo.plan(s.sid) : null; return p ? { ok: true, ...p, files: p.files.map((x) => ({ ...x, file: tilde(x.file) })) } : { ok: false }; }
-async function undoAct(b, who) {
-  const s = sessionById(b?.id); if (!s?.sid) return [404, { ok: false, message: tr('server.loop.gone') }];
-  if (b.op === 'tell') {   // Claude told what was put back (it doesn't know otherwise)
-    const files = String(b.files || '').slice(0, 2000);
-    return s.pid && (s.status !== 'rest' || s.busy) ? steerTo({ sid: s.sid, text: tr('server.undo.tell', { files }) }, who) : giveWork({ sid: s.sid, text: tr('server.undo.tell', { files }) }, who);
-  }
-  if (s.status !== 'rest' || s.busy) return [409, { ok: false, message: tr('server.undo.busy', { name: s.title || s.name }) }];
-  const r = await undo.apply(s.sid);
-  if (!r.done.length) return [409, { ok: false, message: tr('server.undo.nothing') }];
-  chat.system(tr('chat.undo.done', { name: s.title || s.name, n: r.done.length }));
-  broadcast({ k: 'sess', s: pub(s) });
-  fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} undo ${s.sid} from ${who}: ${r.done.map((x) => `${x.action} ${x.file}`).join(', ')}\n`).catch(() => {});
-  return [200, { ok: true, done: r.done.map((x) => ({ ...x, file: tilde(x.file) })), after: tilde(r.after || '') }];
-}
-
-/* ---------- "Ngắt vòng lặp kẹt": a session going round in circles (server/loops.mjs) ----------
-   The async hooks and the status line feed it; a synchronous PreToolUse hook (curl, 0.3 s at most, nothing printed
-   when the office is down or slow: the call goes ahead) posts each call to /hook/loop, which answers at once. The Nth
-   identical failure makes the next identical call denied with a reason Claude reads; the person's name tag goes red,
-   a card in the chat says what repeats (Stop, a hint for Claude), and phones get a notification. The other two signs
-   (compaction after compaction, cost rising with nothing edited) are only shown. Settings → More turns it off. */
-const loopConfig = () => ({ ...LOOP_DEFAULTS, ...(prefs.get('loopGuard') || {}) });
-// the call in a few words, as the card and the reason show it: a command as typed, else the tool and its file
-const loopLabel = (name, i = {}) => clip(redact(oneLine(name === 'Bash' || name === 'PowerShell' ? i.command
-  : `${name}${i.file_path || i.notebook_path ? ` ${base(i.file_path || i.notebook_path)}` : i.url ? ` ${host(i.url)}` : i.pattern || i.query ? ` ${i.pattern || i.query}` : ''}`)), 60);
-const loops = createLoopGuard({ config: loopConfig, labelOf: loopLabel });
-let loopHookAt = 0;   // (the synchronous hook heard from: Settings says to run install again when it never was)
-const loopCards = new Map();   // session id -> its card in the chat (the last 16)
-const loopRun = (s) => (s.viaOffice && tasks.list().find((t) => t.id === s.viaOffice)) || (s.sid && runOf(s.sid, s.cwd)) || null;   // (a run from the office: Stop stops it)
-function loopLine(st, name) {
-  const usd = st.usd != null ? `$${st.usd.toFixed(2)}` : '';
-  return tr(`chat.loop.${st.kind}`, { name, label: `\`${st.label || ''}\``, n: st.n, next: (st.n || 0) + (st.blocked || 0), blocked: st.blocked || 0, mins: st.mins, usd });
-}
-function onLoop(s, sig) {
-  if (!s || !sig) return;
-  const card = loopCards.get(s.id), name = s.title || s.name;
-  const setCard = (loop) => { if (card) chat.setLoop(card.id, loop); };
-  if (sig.type === 'fire') {
-    const st = sig.stuck, run = loopRun(s);
-    if (card && ['on', 'stopping'].includes(chat.byId(card.id)?.loop?.state)) setCard({ state: 'over', why: 'again' });   // (stuck another way: the new card below says how)
-    s.stuck = { kind: st.kind, label: st.label || '', n: st.n || 0, blocked: st.blocked || 0, usd: st.usd ?? null, mins: st.mins || 0, at: st.at };
-    broadcast({ k: 'sess', s: pub(s) });
-    const m = chat.loopCard(s.id, { ...s.stuck, state: 'on', hint: sig.hint ? 'got' : null, sess: s.id, task: run?.id || null });
-    if (m) { loopCards.delete(s.id); loopCards.set(s.id, { id: m.id }); if (loopCards.size > 16) loopCards.delete(loopCards.keys().next().value); }
-    pushOut({ title: tr('server.loop.pushTitle', { name }), body: clip(loopLine(s.stuck, name), 180), tag: `loop-${s.id}`, url: '/?chat' });
-    fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} stuck ${st.kind} ${s.sid} ${clip(oneLine(st.label || ''), 80)}${st.blocked ? ' (denied)' : ''}\n`).catch(() => {});
-  } else if (sig.type === 'blocked') {
-    if (s.stuck) { s.stuck.blocked = sig.stuck.blocked; broadcast({ k: 'sess', s: pub(s) }); }
-    setCard({ blocked: sig.stuck.blocked, ...(sig.hint && { hint: 'got' }) });
-  } else if (sig.type === 'clear') {
-    s.stuck = null; broadcast({ k: 'sess', s: pub(s) });
-    if (card && chat.byId(card.id)?.loop?.state !== 'stopped') setCard({ state: 'over', why: sig.why, ...(sig.hintLost && { hint: 'lost' }) });
-  } else if (sig.type === 'hint') setCard({ hint: 'got' });
-  else if (sig.type === 'hintLost') setCard({ hint: 'lost' });
-  else if (sig.type === 'stopped') setCard({ state: 'stopped' });
-}
-// the reply to the synchronous hook: nothing (Claude Code decides as usual), a deny with its reason, your hint, or Stop
-function loopReply(p) {
-  const r = loops.check(p), hint = r.hint ? tr('server.loop.hintFor', { hint: r.hint }) : '';
-  const out = r.stop ? { continue: false, stopReason: tr('server.loop.stopReason') }
-    : r.deny ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `${tr('server.loop.deny', { n: r.deny.n })}${hint ? `\n\n${hint}` : ''}` } }
-      : hint ? { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: hint } } : null;
-  return { out, sig: r.sig };
-}
-/* ---------- "Chặn ghi đè và giành cổng" (server/overlap.mjs): two sessions on one file, a port another process holds.
-   Told to the session's Claude with its next tool call (the synchronous hook above), and said in the chat. ---------- */
-const overlap = createOverlap();
-const nameOfSid = (sid) => { const x = bySid(sid); return x ? x.title || x.name : String(sid || '').slice(0, 8); };
-// before a call: another session's recent edit of the same file (once per pair and file), a word kept for this session
-function overlapNote(p) {
-  if (p.hook_event_name && p.hook_event_name !== 'PreToolUse') return null;
-  const sid = p.session_id; let text = overlap.take(sid), line = null;
-  if (EDIT_TOOLS.has(p.tool_name)) {
-    const file = fileOf(p.tool_input, p.cwd || bySid(sid)?.cwd), hit = overlap.before(sid, file);
-    if (hit) {
-      const other = nameOfSid(hit.other), time = new Date(hit.at).toTimeString().slice(0, 5);
-      text = [tr('server.overlap.file', { name: other, time }), text].filter(Boolean).join('\n\n');
-      line = tr('chat.overlap.file', { a: nameOfSid(sid), b: other, file: base(file) });
-    }
-  }
-  return text || line ? { text, line } : null;
-}
-// what Claude should know, added to whatever the loop guard answers (a deny's reason, its hint) or on its own
-function withContext(out, text) {
-  if (out?.continue === false) return out;   // (stopping anyway)
-  const h = out?.hookSpecificOutput;
-  if (h?.permissionDecision === 'deny') return { ...out, hookSpecificOutput: { ...h, permissionDecisionReason: `${h.permissionDecisionReason || ''}\n\n${text}`.trim() } };
-  return { ...out, hookSpecificOutput: { ...h, hookEventName: 'PreToolUse', additionalContext: [h?.additionalContext, text].filter(Boolean).join('\n\n') } };
-}
-// a command that couldn't have its port: who holds it (a dev server the Mac panel knows, and the session that started
-// it), said in the chat and to this session's Claude (never to kill another session's server); once per port per window
-async function portClash(s, sid, port) {
-  if (!port || !overlap.portOnce(sid, port)) return;
-  const d = (await sysSnapshot().catch(() => null))?.devServers?.find((x) => x.ports.includes(port));
-  const holder = !d ? tr('server.overlap.someone') : d.owner?.name ? tr('server.overlap.holderOf', { label: d.label, owner: d.owner.name, up: sysDur(d.up) }) : tr('server.overlap.holder', { label: d.label, up: sysDur(d.up) });
-  chat.system(tr('chat.overlap.port', { name: s.title || s.name, port, holder }));
-  overlap.note(sid, tr('server.overlap.port', { port, holder }));
-  fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} port ${port} clash ${sid}${d ? ` held by pid ${d.pid}` : ''}\n`).catch(() => {});
-}
-// Stop and a hint from the card (any page that may give work: the Mac, a phone when it is allowed)
-function loopAct(b, mac) {
-  if (!mac && !prefs.get('phoneTasks')) return { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') };
-  const id = String(b?.id || ''), s = [...sessions.values()].find((x) => x.id === id); if (!s?.sid) return { ok: false, message: tr('server.loop.gone') };
-  const card = loopCards.get(s.id);
-  if (b.op === 'stop') {
-    const run = loopRun(s);
-    if (run) { const ok = tasks.stop(run.id); if (ok && card) chat.setLoop(card.id, { state: 'stopped' }); return { ok, how: 'task' }; }
-    if (s.status === 'rest') return { ok: false, code: 'resting', message: tr('server.loop.resting', { name: s.title || s.name }) };
-    loops.stop(s.sid); if (card) chat.setLoop(card.id, { state: 'stopping' });
-    fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} stuck stop ${s.sid} from ${mac ? 'mac' : 'phone'}\n`).catch(() => {});
-    return { ok: true, how: 'next' };
-  }
-  if (b.op === 'hint') {
-    // a turn already over can't take it at its next step: the page carries the conversation on instead (POST /api/tasks)
-    if (s.status === 'rest') return { ok: false, code: 'resting', sid: s.sid };
-    if (!loops.hint(s.sid, oneLine(b.text))) return { ok: false, code: 'empty' };
-    if (card) chat.setLoop(card.id, { hint: 'sent' });
-    fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} stuck hint ${s.sid} from ${mac ? 'mac' : 'phone'}\n`).catch(() => {});
-    return { ok: true };
-  }
-  return { ok: false };
-}
-const loopOut = () => ({ ok: true, ...loopConfig(), choices: { n: LOOP_N, min: LOOP_MIN }, hookAt: loopHookAt });
 
 const { findClaude, findCodex, findOpenCode: findOpenCodeCached, findAntigravity, findZCode } = createBinFinder({ home: HOME });
 const {
@@ -1820,7 +1660,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/hook/loop') {   // every tool call, synchronously: answered at once, from memory
     if (!isLoopback(req) || req.headers.origin) { res.writeHead(403).end(); return; }
-    loopHookAt = Date.now();
+    touchLoopHook();
     readJson(req, 4_000_000).then((p) => {
       // (a file tool about to write: its file copied first, for "Hoàn tác lượt cuối"; before the answer, so before the write)
       try { if (p && (!p.hook_event_name || p.hook_event_name === 'PreToolUse') && UNDO_TOOLS.has(p.tool_name)) undo.before(p.session_id, fileOf(p.tool_input, p.cwd || bySid(p.session_id)?.cwd)); } catch (err) { console.error('undo', err); }
