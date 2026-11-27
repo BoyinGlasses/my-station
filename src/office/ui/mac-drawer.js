@@ -11,6 +11,8 @@ import { DEMO, demoMac } from '../demo/demo.js';
 import { icon } from './icons.js';
 import { strandedSection, strandedHolding } from './stranded.js';
 import { t as tr, num, locale } from '../../i18n/index.js';
+import { verdictKey } from '../../shared/mac-verdict.js';
+export { verdictKey };
 
 export let macSnap = null;
 let confirmKey = null;
@@ -473,15 +475,6 @@ function holders(s) {
   const rest = total - shown.reduce((a, g) => a + g.mem, 0);
   if (rest > total * 0.01) shown.push({ key: 'other', name: tr('mac.held.other'), mem: rest, slot: 0 });
   return { total, groups: shown };
-}
-export function verdictKey(s) {
-  const swap = s.mem.swapUsed;
-  if (s.mem.pressure === 'critical') return swap > GB ? 'critical' : 'squeeze';
-  if (s.mem.pressure === 'warn') return swap > GB ? 'swap' : 'squeeze';
-  if (swap > 4 * GB) return 'swapLeft';
-  if (s.diskTight) return 'disk';
-  if (s.cpu.percent > 85) return 'cpu';
-  return 'ok';
 }
 // a sparkline: one series, its own scale, a point per minute; hovering a minute names it
 function spark(label, points, max, fmt, lv) {

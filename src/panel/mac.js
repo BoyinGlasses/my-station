@@ -4,6 +4,7 @@
 // editor's side bar counts as on screen all day, and /api/sys runs `ps`; the server keeps a reading 3 s).
 import { t as tr } from '../i18n/index.js';
 import { GB, el, fmtBytes } from './fmt.js';
+import { verdictKey } from '../shared/mac-verdict.js';
 
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 const lvl = (p, warn, crit) => (p >= crit ? 'critical' : p >= warn ? 'warn' : 'normal');
@@ -11,16 +12,6 @@ const KEY = 'panel-mac-open';
 let snap = null, open = false, box = null, ctx = null, timer = 0, ctl = null, note = '', noteTimer = 0, confirmKey = null, confirmTimer = 0;
 const busy = new Set(), stubborn = new Map();
 try { open = localStorage.getItem(KEY) === '1'; } catch { /* private mode */ }
-
-function verdictKey(s) {
-  const swap = s.mem.swapUsed;
-  if (s.mem.pressure === 'critical') return swap > GB ? 'critical' : 'squeeze';
-  if (s.mem.pressure === 'warn') return swap > GB ? 'swap' : 'squeeze';
-  if (swap > 4 * GB) return 'swapLeft';
-  if (s.diskTight) return 'disk';
-  if (s.cpu.percent > 85) return 'cpu';
-  return 'ok';
-}
 const idleTips = (s) => { const pids = new Set((s.claude || []).map((c) => c.pid)); return (s.tips || []).filter((t) => t.action === 'kill' && pids.has(t.target)); };
 // who holds the most RAM: apps, the Claude sessions together, dev servers
 function holders(s) {
