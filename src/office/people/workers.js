@@ -34,7 +34,7 @@ export const clockHooks = {};
 export const lunchHooks = {};
 const viaClock = (kind, w, then) => (clockHooks[kind] ? clockHooks[kind](w, then) : then());
 export function hash(s) { let h = 2166136261; for (const ch of String(s)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
-export const colorOf = (s) => (s.desk >= 0 ? PALETTE[s.desk] : PALETTE[hash(s.name) % PALETTE.length]);
+export const colorOf = (s) => (s.desk >= 0 ? PALETTE[s.desk % PALETTE.length] : PALETTE[hash(s.name) % PALETTE.length]);
 // What to call a session on screen: the chat's title (your rename, else Claude's), else its short name.
 // The short name stays the identity: looks, colours and the timeline are keyed by it.
 export const dn = (s) => (s ? s.title || s.name : '');
