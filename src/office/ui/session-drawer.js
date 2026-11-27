@@ -19,6 +19,7 @@ import { openUndo } from './undo-view.js';
 import { t as tr, locale } from '../../i18n/index.js';
 import { modelLong } from '../../shared/model-name.js';
 import { safeHttpUrl } from '../../shared/safe-url.js';
+import { renderMarkdown } from '../../shared/md.js';
 
 /* ---------- session drawer ---------- */
 export let tab = 'chat';
@@ -151,91 +152,20 @@ async function loadLog(scrollEnd = false) {
   } catch { if (id === state.selectedId && tab === 'chat' && !logItems.length) $('ds-body').replaceChildren(el('p', 'chat-empty', tr('drawer.chatUnreadable'))); }
 }
 export function scheduleLog() { clearTimeout(logTimer); logTimer = setTimeout(() => loadLog(false), 1200); }
-/* conversation: a small markdown renderer that only builds DOM nodes (never innerHTML), so a transcript can't inject
-   markup. Covers what Claude writes: headings, lists (nested, task boxes), code blocks, tables, quotes, rules, links. */
-const MD_INLINE = /(`[^`\n]+`|\*\*[^*\n]+?\*\*|__[^_\n]+?__|(?<![\w*])\*[^*\s][^*\n]*?\*(?!\w)|\[[^\]\n]+\]\([^)\s]+\)|https?:\/\/[^\s<>()"']+[^\s<>()"'.,;:!?])/;
-function mdInline(parent, text) {
-  for (const bit of String(text).split(new RegExp(MD_INLINE.source))) {
-    if (!bit) continue;
-    let m;
-    if (bit.length > 2 && bit[0] === '`' && bit.at(-1) === '`') parent.append(el('code', null, bit.slice(1, -1)));
-    else if (/^(\*\*|__).+\1$/.test(bit) && bit.length > 4) { const b = el('strong'); mdInline(b, bit.slice(2, -2)); parent.append(b); }
-    else if (/^\*[^*].*\*$/.test(bit)) { const i = el('em'); mdInline(i, bit.slice(1, -1)); parent.append(i); }
-    else if ((m = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(bit))) {
-      if (/^https?:\/\//.test(m[2])) { const a = el('a', null, m[1]); a.href = m[2]; a.target = '_blank'; a.rel = 'noopener noreferrer'; parent.append(a); }
-      else parent.append(el('span', 'md-file', m[1]));   // a path in the project: nothing to open from here
-    } else if (/^https?:\/\//.test(bit)) { const a = el('a', null, short(bit.replace(/^https?:\/\//, ''), 60)); a.href = bit; a.target = '_blank'; a.rel = 'noopener noreferrer'; parent.append(a); }
-    else parent.append(bit);
-  }
-}
-const LIST_RE = /^(\s*)([-*+•]|\d{1,3}[.)])\s+(.*)$/;
+/* conversation: DOM-only markdown via src/shared/md.js, with copyable code headers and task boxes. */
 export function mdBlocks(text) {
-  const frag = document.createDocumentFragment(), lines = String(text).replace(/\r/g, '').split('\n');
-  let i = 0;
-  const isTableSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l || '');
-  const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
-  const startsBlock = (l, next) => /^\s*```/.test(l) || /^#{1,6}\s/.test(l) || LIST_RE.test(l) || /^\s*>/.test(l) || /^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l) || (/^\s*\|/.test(l) && isTableSep(next));
-  while (i < lines.length) {
-    const line = lines[i];
-    if (!line.trim()) { i++; continue; }
-    let m;
-    if ((m = /^\s*```\s*([\w+#.-]*)/.exec(line))) {
-      const code = []; i++;
-      while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]);
-      i++;
-      const box = el('div', 'md-code'), head = el('div', 'md-code-head'), copy = el('button', 'md-copy', tr('drawer.copy')); copy.type = 'button';
-      const body = code.join('\n'); copy.addEventListener('click', () => copyText(body, copy));
-      head.append(el('span', null, m[1] || 'code'), copy); box.append(head, el('pre', null, body)); frag.append(box);
-      continue;
-    }
-    if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) { const h = el(m[1].length <= 2 ? 'h4' : 'h5'); mdInline(h, m[2].replace(/\s#+\s*$/, '')); frag.append(h); i++; continue; }
-    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { frag.append(el('hr')); i++; continue; }
-    if (/^\s*\|/.test(line) && isTableSep(lines[i + 1])) {
-      const wrap = el('div', 'md-table'), t = el('table'), thead = el('thead'), tr = el('tr');
-      for (const c of cells(line)) { const th = el('th'); mdInline(th, c); tr.append(th); }
-      thead.append(tr); t.append(thead); i += 2;
-      const tb = el('tbody');
-      while (i < lines.length && /^\s*\|/.test(lines[i])) { const r = el('tr'); for (const c of cells(lines[i])) { const td = el('td'); mdInline(td, c); r.append(td); } tb.append(r); i++; }
-      t.append(tb); wrap.append(t); frag.append(wrap); continue;
-    }
-    if (/^\s*>/.test(line)) {
-      const q = [];
-      while (i < lines.length && /^\s*>/.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/, ''));
-      const bq = el('blockquote'); bq.append(mdBlocks(q.join('\n'))); frag.append(bq); continue;
-    }
-    if (LIST_RE.test(line)) {
-      const stack = [];   // { indent, list, li }
-      while (i < lines.length) {
-        const l = lines[i];
-        if (!l.trim()) { if (LIST_RE.test(lines[i + 1] || '')) { i++; continue; } break; }
-        const lm = LIST_RE.exec(l);
-        if (!lm) {
-          if (/^\s+\S/.test(l) && stack.length) { const li = stack.at(-1).li; li.append(' '); mdInline(li, l.trim()); i++; continue; }
-          break;
-        }
-        const indent = lm[1].replace(/\t/g, '  ').length, ordered = /\d/.test(lm[2]);
-        while (stack.length && stack.at(-1).indent > indent) stack.pop();
-        if (!stack.length || stack.at(-1).indent < indent) {
-          const list = el(ordered ? 'ol' : 'ul');
-          if (ordered && parseInt(lm[2], 10) > 1) list.start = parseInt(lm[2], 10);
-          (stack.length ? stack.at(-1).li : frag).append(list);
-          stack.push({ indent, list, li: null });
-        }
-        const top = stack.at(-1), li = el('li');
-        const task = /^\[( |x|X)\]\s+(.*)$/.exec(lm[3]);
-        if (task) { li.className = 'md-task'; li.dataset.done = String(task[1] !== ' '); const t = el('span'); mdInline(t, task[2]); li.append(el('span', 'md-box', task[1] !== ' ' ? '✓' : ''), t); }
-        else mdInline(li, lm[3]);
-        top.list.append(li); top.li = li; i++;
-      }
-      continue;
-    }
-    const para = [];
-    while (i < lines.length && lines[i].trim() && !(para.length && startsBlock(lines[i], lines[i + 1]))) para.push(lines[i++]);
-    const p = el('p');
-    para.forEach((l, k) => { if (k) p.append(el('br')); mdInline(p, l); });
-    frag.append(p);
-  }
-  return frag;
+  return renderMarkdown(text, {
+    taskLists: true,
+    shortUrl: (u) => short(u.replace(/^https?:\/\//, ''), 60),
+    codeBlock: (lang, body) => {
+      const box = el('div', 'md-code'), head = el('div', 'md-code-head'), copy = el('button', 'md-copy', tr('drawer.copy'));
+      copy.type = 'button';
+      copy.addEventListener('click', () => copyText(body, copy));
+      head.append(el('span', null, lang || 'code'), copy);
+      box.append(head, el('pre', null, body));
+      return box;
+    },
+  });
 }
 function copyText(text, btn) {
   const done = () => { if (btn) { const t = btn.textContent; btn.textContent = tr('drawer.copied'); setTimeout(() => { btn.textContent = t; }, 1400); } else toast(tr('drawer.copiedToast')); };
