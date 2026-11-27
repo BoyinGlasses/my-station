@@ -42,8 +42,6 @@ export const ACT = {
 export const ANIM_AT = { dining: 'eat', desk: 'type', server: 'console', library: 'read', globe: 'globe', board: 'board', coffee: 'coffee', director: 'think', brief: 'board', wc: 'idle', tests: 'think', post: 'idle' };
 // A session's state, translated when read: STATUS_LABEL[s.status] keeps working for every caller.
 const translated = (keys, prefix) => Object.defineProperties({}, Object.fromEntries(keys.map((k) => [k, { enumerable: true, get: () => tr(`${prefix}.${k}`) }])));
-// Where each station is, in words (the coffee corner is the dining room on the company floor).
-let STATION_LABEL;
 export const STATUS_LABEL = translated(['work', 'wait', 'rest'], 'events.status');
 // Streamer mode: the event types whose label is replaced by a generic phrase (events.generic.<type>).
 const GENERIC = new Set(['prompt', 'read', 'grep', 'glob', 'skill', 'edit', 'write', 'bash', 'web', 'fetch', 'mcp', 'wait', 'fail', 'deploy', 'test']);
@@ -111,11 +109,6 @@ export function setup() {
   // On the company floor the director brings each new task to the desk (no trip to the board), and a boss briefs its
   // subagents at the meeting-room screen.
   if (PRO) { Object.assign(ACT.prompt, { station: 'desk', anim: 'think', dwell: 2.6 }); Object.assign(ACT.agent, { station: 'brief', anim: 'board' }); }
-  STATION_LABEL = translated(['dining', 'board', 'library', 'desk', 'server', 'globe', 'meeting', 'director', 'wc', 'tests', 'post'], 'events.station');
-  Object.defineProperties(STATION_LABEL, {
-    coffee: { enumerable: true, get: () => tr(PRO ? 'events.station.dining' : 'events.station.coffee') },
-    brief: { enumerable: true, get: () => tr('events.station.meeting') },
-  });
   // Streamer mode: any label that could carry a command, path, prompt or URL becomes a generic phrase.
   state.streamer = false;
   // Zone names over the office show only while you point at their furniture, unless you ask for them always.

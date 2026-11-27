@@ -4,11 +4,6 @@
 export default {
   // a session's state in the list and the drawer
   status: { work: 'working', wait: 'needs approval', rest: 'resting' },
-  // where people go for each kind of work
-  station: {
-    dining: 'dining room', board: 'whiteboard', library: 'library', desk: 'desk', server: 'server room', globe: 'window',
-    coffee: 'coffee corner', meeting: 'meeting room', director: "director's office", wc: 'restroom', tests: 'test board', post: 'post box',
-  },
   // streamer mode: what a label becomes when it could show a path, command, prompt or URL
   generic: {
     prompt: 'a new task', read: 'a file', grep: 'something', glob: 'a folder', skill: 'a skill', edit: 'a file', write: 'a file',
