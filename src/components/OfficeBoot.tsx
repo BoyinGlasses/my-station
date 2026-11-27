@@ -5,7 +5,7 @@ import { useEffect } from 'react';
 // fonts: load the faces they use first (at most 1.5 s, then start anyway with whatever is there).
 const FACES = ['400 16px "Be Vietnam Pro"', '600 16px "Be Vietnam Pro"', '700 16px "Be Vietnam Pro"', '800 16px "Be Vietnam Pro"', '400 16px "JetBrains Mono"'];
 const fontsReady = () => Promise.race([
-  Promise.all(FACES.map((f) => document.fonts.load(f, 'Office ờ'))).catch(() => {}),
+  Promise.all(FACES.map((f) => document.fonts.load(f, 'Office ờ ก'))).catch(() => {}),
   new Promise((resolve) => setTimeout(resolve, 1500)),
 ]);
 

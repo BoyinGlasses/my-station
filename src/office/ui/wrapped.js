@@ -82,7 +82,7 @@ async function open() {
   lastData = d;
   // canvas text does not wait for web fonts: load the weights the card uses first (the sample text pulls in both the Latin
   // and the Vietnamese subsets)
-  await Promise.all(['800 40px', '600 30px', '500 26px'].map((f) => document.fonts.load(`${f} "Be Vietnam Pro"`, 'Tuần ờ'))).catch(() => {});
+  await Promise.all(['800 40px', '600 30px', '500 26px'].map((f) => document.fonts.load(`${f} "Be Vietnam Pro"`, 'Tuần ờ ก'))).catch(() => {});
   draw(d, shot);
   $('wrap-note').textContent = d.days < 7 ? tr('wrapped.partial', { n: d.days }) : tr('wrapped.full');
 }
