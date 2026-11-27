@@ -11,6 +11,7 @@ import { redact } from './redact.mjs';
 import { createT } from '../src/i18n/index.js';
 import { OS } from './platform/index.mjs';
 import { sh } from './platform/shared.mjs';
+import { dataDir } from './data-dir.mjs';
 
 const HOME = os.homedir();
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(HOME, '.claude');
@@ -35,7 +36,7 @@ const KEEP_APPS = new Set(['Antigravity IDE', 'Finder', 'Claude']);
 let tr = createT('en'), num = tr.num, langOf = () => 'en';
 export function setI18n(o) { ({ tr, num, lang: langOf } = o); }
 
-const tilde = (p) => (p && p.startsWith(HOME) ? '~' + p.slice(HOME.length) : p || '');
+const tilde = (p) => (!p ? '' : p === HOME ? '~' : p.startsWith(HOME + path.sep) ? '~' + p.slice(HOME.length) : p);
 const exists = async (p) => { try { await fsp.access(p); return true; } catch { return false; } };
 const readdir = async (p) => { try { return await fsp.readdir(p); } catch { return []; } };
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
@@ -78,7 +79,7 @@ const transcriptOf = (j) => path.join(CLAUDE_DIR, 'projects', String(j.cwd || ''
    Every 15 s the owner of each process group under a live session is noted, so a dev server can still be traced to
    its session after the session closed and launchd adopted it. A group id cannot be reused while any member lives;
    a record is kept only while it has a member that started before the record was last confirmed. */
-const OWNERS_FILE = path.join(process.env.OFFICE_DATA_DIR ? path.resolve(process.env.OFFICE_DATA_DIR) : path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data'), 'owners.json');
+const OWNERS_FILE = path.join(dataDir(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')), 'owners.json');
 const groups = new Map();   // pgid -> { sid, name, dir, seen (unix s) }
 try { for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(OWNERS_FILE, 'utf8')))) groups.set(Number(k), v); } catch { /* first run */ }
 let groupsDirty = false;
@@ -110,8 +111,11 @@ function noteOwners(P, files) {
   }
   if (groupsDirty) {
     groupsDirty = false;
-    const tmp = OWNERS_FILE + '.tmp';
-    fsp.writeFile(tmp, JSON.stringify(Object.fromEntries(groups))).then(() => fsp.rename(tmp, OWNERS_FILE)).catch(() => {});
+    const tmp = `${OWNERS_FILE}.${process.pid}.tmp`;
+    fsp.mkdir(path.dirname(OWNERS_FILE), { recursive: true })
+      .then(() => fsp.writeFile(tmp, JSON.stringify(Object.fromEntries(groups))))
+      .then(() => fsp.rename(tmp, OWNERS_FILE))
+      .catch(() => fsp.rm(tmp, { force: true }).catch(() => {}));
   }
 }
 // Owner of one process: a live session above it, else the recorded owner of its process group.
@@ -161,7 +165,8 @@ function noteUsage(P, est, foot, fAt) {
     while (h.s.length > 2 && now - h.s[1][0] > GROW_WINDOW) h.s.shift();
   }
   for (const k of hist.keys()) if (!live.has(k)) hist.delete(k);
-  for (const port of est.keys()) portSeen.set(port, now);
+  for (const port of est.keys()) { portSeen.delete(port); portSeen.set(port, now); }
+  for (const [port, at] of portSeen) if (now - at > 6 * 3600e3 || portSeen.size > 1000) portSeen.delete(port); else break;
 }
 // Growth of one process over the last 15 minutes, and how long it has kept a core busy.
 function usageOf(p) {
@@ -496,7 +501,11 @@ export function startTrend() {
 
 /* ---------- actions ---------- */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function within(p, roots) { const r = path.resolve(p); return roots.some((root) => r.startsWith(root + path.sep)); }
+const normPath = (p) => { const r = path.resolve(p); return process.platform === 'win32' ? r.toLowerCase() : r; };
+export function within(p, roots) {
+  const r = normPath(p);
+  return roots.some((root) => { const base = normPath(root); return r.startsWith(base.endsWith(path.sep) ? base : base + path.sep); });
+}
 
 export async function sysAction({ action, target, force, start, items }) {
   // several idle Claude sessions at once (the drawer's main button, and closing idle sessions on a timer): the same checks
