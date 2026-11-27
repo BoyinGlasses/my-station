@@ -21,6 +21,7 @@ import { normalizeAgentEvent, normalizeTool } from './agent-events.mjs';
 import { readCodexHistory } from './codex-history.mjs';
 import { createAgentHistory } from './agent-history.mjs';
 import { cliCommand, openCodeCommand as findOpenCode } from './cli-command.mjs';
+import { editorByDot, claudeEditorSettings } from './editors.mjs';
 import { createUndo, EDIT_TOOLS as UNDO_TOOLS } from './undo.mjs';
 import { createVault } from './vault.mjs';
 import { MAIN, SUB, modelsOf, withModels, hasSplit, withSplit } from './models.mjs';
@@ -2508,8 +2509,6 @@ function switchScript() {
   fs.chmodSync(SWITCH_FILE, 0o755);
   return SWITCH_FILE;
 }
-// the editors that have Claude Code's extension, and their user settings
-const EDITORS = [['.vscode', 'Code', 'VS Code'], ['.vscode-insiders', 'Code - Insiders', 'VS Code Insiders'], ['.cursor', 'Cursor'], ['.windsurf', 'Windsurf'], ['.antigravity', 'Antigravity'], ['.antigravity-ide', 'Antigravity IDE'], ['.kiro', 'Kiro'], ['.trae', 'Trae'], ['.positron', 'Positron']];
 const WRAP_KEY = 'claudeCode.claudeProcessWrapper';
 /* The Mac panel's Claude sessions, told apart the way you know them: the conversation's title, the app it runs in (the
    editor whose extension runs it, else where Claude Code says it runs), the subagents at work, and the one you last wrote
@@ -2518,15 +2517,11 @@ function claudeRows(rows) {
   const byPid = new Map([...sessions.values()].filter((s) => s.pid).map((s) => [s.pid, s]));
   const you = [...byPid.values()].filter((s) => s.saidAt > Date.now() - 3 * 3600e3).sort((a, b) => b.saidAt - a.saidAt)[0];
   return rows.map((c) => {
-    const s = byPid.get(c.pid), ed = EDITORS.find(([dot]) => dot === c.editor);
-    return { ...c, title: s?.title || '', app: ed ? ed[2] || ed[1] : s?.origin || '', agents: s ? Object.keys(s.subs).length : 0, you: !!s && s === you };
+    const s = byPid.get(c.pid), ed = editorByDot(c.editor);
+    return { ...c, title: s?.title || '', app: ed ? ed.label : s?.origin || '', agents: s ? Object.keys(s.subs).length : 0, you: !!s && s === you };
   });
 }
-function editorSettings() {
-  const home = os.homedir(), base = process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support') : path.join(home, '.config');
-  return EDITORS.filter(([dot]) => { try { return fs.readdirSync(path.join(home, dot, 'extensions')).some((e) => /^anthropic\.claude-code-/.test(e)); } catch { return false; } })
-    .map(([, app, shown]) => ({ app: shown || app, file: path.join(base, app, 'User', 'settings.json') }));
-}
+const editorSettings = () => claudeEditorSettings();
 // on: the office's script as each editor's wrapper (a wrapper of the user's own is left alone); off: taken out again.
 // -> [{ app, ok, other }] (ok false: a settings file the office can't read, e.g. with comments: the card shows the way by hand)
 function setEditorWrapper(on) {

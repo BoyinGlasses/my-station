@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { EDITORS } from './editors.mjs';
 
 export const EXT_ID = 'my-office.my-office-panel';
 
@@ -59,8 +60,8 @@ export function buildVsix(src, out) {
 }
 
 // The editors' command lines: inside their app on a Mac, else on the PATH (the ones that take --install-extension)
-const APPS = [['Antigravity IDE', '.antigravity-ide'], ['Antigravity', '.antigravity'], ['Visual Studio Code', '.vscode'], ['Visual Studio Code - Insiders', '.vscode-insiders'], ['Cursor', '.cursor'], ['Windsurf', '.windsurf'], ['Kiro', '.kiro'], ['Trae', '.trae']];
-const ON_PATH = [['antigravity-ide', 'Antigravity IDE', '.antigravity-ide'], ['code', 'Visual Studio Code', '.vscode'], ['code-insiders', 'Visual Studio Code - Insiders', '.vscode-insiders'], ['cursor', 'Cursor', '.cursor'], ['windsurf', 'Windsurf', '.windsurf']];
+const APPS = EDITORS.map((e) => [e.app, e.dot]);
+const ON_PATH = EDITORS.filter((e) => e.cli).map((e) => [e.cli, e.app, e.dot]);
 export function editorClis({ home = os.homedir(), apps = '/Applications', env = process.env } = {}) {
   const found = [], seen = new Set();
   if (process.platform === 'darwin') {

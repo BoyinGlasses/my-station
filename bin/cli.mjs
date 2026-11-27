@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createPrefs } from '../server/prefs.mjs';
 import { serviceFor } from './service.mjs';
 import { openCodeCommand } from '../server/cli-command.mjs';
+import { allEditorSettings } from '../server/editors.mjs';
 import { addOtel, collectorSnippet, managedEnvs, otelOwner, removeOtel } from '../server/otel-setup.mjs';
 import { dataDir } from '../server/data-dir.mjs';
 import { buildVsix, installPanel, uninstallPanel, panelIn } from '../server/vsix.mjs';
@@ -340,12 +341,11 @@ async function uninstallCodex() {
 // the editors' Claude Code started through the office's account script (the plan card's "Use" / switching): taken out,
 // or Claude Code wouldn't start once the office is gone
 function unwrapEditors() {
-  const script = path.join(DATA_DIR, 'claude-switch.sh'), home = os.homedir(), key = 'claudeCode.claudeProcessWrapper';
-  const base = process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support') : process.platform === 'win32' ? (process.env.APPDATA || path.join(home, 'AppData', 'Roaming')) : path.join(home, '.config');
+  const script = path.join(DATA_DIR, 'claude-switch.sh'), key = 'claudeCode.claudeProcessWrapper';
   let n = 0;
-  for (const app of ['Code', 'Code - Insiders', 'Cursor', 'Windsurf', 'Antigravity', 'Antigravity IDE', 'Kiro', 'Trae', 'Positron']) {
+  for (const file of allEditorSettings()) {
     try {
-      const f = fs.realpathSync(path.join(base, app, 'User', 'settings.json')), cfg = JSON.parse(fs.readFileSync(f, 'utf8'));
+      const f = fs.realpathSync(file), cfg = JSON.parse(fs.readFileSync(f, 'utf8'));
       if (cfg[key] !== script) continue;
       delete cfg[key]; fs.writeFileSync(f, `${JSON.stringify(cfg, null, 4)}\n`); n++;
     } catch { /* no such editor, or a file with comments */ }
