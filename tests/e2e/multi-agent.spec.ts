@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test('project work chooser sends the selected agent to the task API', async ({ page }) => {
+test('@smoke project work chooser sends the selected agent to the task API', async ({ page }) => {
   const sent: Record<string, unknown>[] = [];
   await page.route('**/api/models?**', (route) => route.fulfill({ json: { ok: true, models: [{ id: 'custom/my-model', name: 'Custom Model' }] } }));
   await page.route('**/api/tasks**', async (route) => {
