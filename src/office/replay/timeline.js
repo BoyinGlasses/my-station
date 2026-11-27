@@ -177,7 +177,7 @@ export function setup() {
   $('tl-open').addEventListener('click', openTimeline);
   $('tl-csv').addEventListener('click', () => {
     const d = tl.data; if (!d) return;
-    const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`, ts = (t) => new Date(t).toLocaleString('sv-SE');
+    const q = (v) => { const s = String(v ?? ''); return `"${(/^[=+\-@\t\r]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`; }, ts = (t) => new Date(t).toLocaleString('sv-SE');
     const lines = [tr('timeline.csvHead')];
     for (const r of d.rows) for (const [s, e, k, label] of r.spans) if (k !== 'idle') lines.push([q(r.agent ? d.rows.find((x) => !x.agent && r.key.startsWith(x.key + '|'))?.name || '' : r.name), q(r.agent ? rowName(r) : ''), q(ts(s)), q(ts(e)), Math.round((e - s) / 1000), q(kindLabel(k)), q(label)].join(','));
     const a = el('a'); a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }));

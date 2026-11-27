@@ -10,6 +10,7 @@ import { closeMac } from './mac-drawer.js';
 import { closeBurn, drB } from './burn.js';
 import { toast } from './activity.js';
 import { t as tr, locale } from '../../i18n/index.js';
+import { quoteShellArg } from '../../shared/safe-url.js';
 
 export let drV;
 let q = '', reqSeq = 0, typeT = 0, open = null, tab = 'list';   // (open: the conversation being read, or null for the list; tab: 'list' | 'report')
@@ -123,7 +124,7 @@ async function read(sid) {
   if (r.gone) top.append(el('p', 'vl-gone', tr('vault.goneNote', { date: day(r.gone) })));
   else {
     // carry it on: its transcript is still there (in the folder it ran in)
-    const cmd = `${r.cwd ? `cd ${r.cwd} && ` : ''}claude --resume ${r.sid}`, row = el('div', 'vl-resume'), copy = el('button', 'btn btn--sm', tr('vault.copy')); copy.type = 'button';
+    const cmd = `${r.cwd ? `cd ${quoteShellArg(r.cwd)} && ` : ''}claude --resume ${quoteShellArg(r.sid)}`, row = el('div', 'vl-resume'), copy = el('button', 'btn btn--sm', tr('vault.copy')); copy.type = 'button';
     copy.addEventListener('click', () => navigator.clipboard?.writeText(cmd).then(() => toast(tr('vault.copied'), 2500)).catch(() => {}));
     row.append(el('small', null, tr('vault.resume')), el('code', null, cmd), copy);
     top.append(row);
